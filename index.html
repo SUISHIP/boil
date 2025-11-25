@@ -26,9 +26,10 @@
     <!-- Babel (ブラウザでJSXを動かすための変換ツール) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- 外部ライブラリ: APNG作成用 -->
+    <!-- 外部ライブラリ: APNG作成用 & ZIP作成用 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <style>
         /* カスタムスクロールバーなど */
@@ -74,6 +75,7 @@
         const Settings = (props) => <Icon path={<><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>} {...props} />;
         const Check = (props) => <Icon path={<polyline points="20 6 9 17 4 12"/>} {...props} />;
         const Info = (props) => <Icon path={<><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></>} {...props} />;
+        const Images = (props) => <Icon path={<><path d="M18 22H4a2 2 0 0 1-2-2V6" /><path d="m22 13-1.296-1.296a2.41 2.41 0 0 0-3.408 0L11 18" /><circle cx="12" cy="8" r="2" /><rect width="16" height="16" x="6" y="2" rx="2" /></>} {...props} />;
 
         // --- パラメータ定数 ---
         const DEFAULT_PARAMS = {
@@ -274,8 +276,8 @@
                 }
             }, [isPlaying, animate, frames, originalImage]);
 
-            // エクスポート
-            const handleExport = async () => {
+            // APNG エクスポート
+            const handleExportAPNG = async () => {
                 if (frames.length === 0 || typeof window.UPNG === 'undefined') {
                     alert("ライブラリの読み込み中、またはフレームがありません。");
                     return;
@@ -304,7 +306,55 @@
                     URL.revokeObjectURL(url);
                 } catch (e) {
                     console.error(e);
-                    alert("エクスポートに失敗しました。");
+                    alert("APNGエクスポートに失敗しました。");
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
+
+            // ZIP エクスポート
+            const handleExportZip = async () => {
+                if (frames.length === 0 || typeof window.JSZip === 'undefined') {
+                    alert("ライブラリの読み込み中、またはフレームがありません。");
+                    return;
+                }
+                
+                setIsProcessing(true);
+                await new Promise(r => setTimeout(r, 50));
+
+                try {
+                    const zip = new window.JSZip();
+                    
+                    const promises = frames.map((frameData, index) => {
+                        return new Promise((resolve) => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = frameData.width;
+                            canvas.height = frameData.height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.putImageData(frameData, 0, 0);
+                            
+                            canvas.toBlob((blob) => {
+                                zip.file(`frame_${String(index).padStart(2, '0')}.png`, blob);
+                                resolve();
+                            }, 'image/png');
+                        });
+                    });
+
+                    await Promise.all(promises);
+                    
+                    const content = await zip.generateAsync({type: "blob"});
+                    const url = URL.createObjectURL(content);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `boil_frames_${Date.now()}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                } catch (e) {
+                    console.error(e);
+                    alert("ZIP作成に失敗しました。");
                 } finally {
                     setIsProcessing(false);
                 }
@@ -383,7 +433,7 @@
                             {originalImage && (
                                 <div className="bg-blue-50 text-blue-700 text-sm p-3 rounded-lg flex items-start gap-2 border border-blue-100">
                                     <div className="mt-0.5 shrink-0"><Info size={16} /></div>
-                                    <p>エクスポートは <strong>APNG (Animated PNG)</strong> 形式で行われます。GIFよりも高品質で、完全な透明背景を保持できます。</p>
+                                    <p>エクスポートは <strong>APNG</strong> または <strong>連番PNG(ZIP)</strong> が選べます。どちらも透明背景をサポートしています。</p>
                                 </div>
                             )}
                         </div>
@@ -453,9 +503,9 @@
                                 </div>
                             </div>
 
-                            <div className="mt-6 pt-6 border-t border-slate-100">
+                            <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col gap-3">
                                 <button
-                                    onClick={handleExport}
+                                    onClick={handleExportAPNG}
                                     disabled={!originalImage || isProcessing}
                                     className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-lg flex items-center justify-center gap-2 font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-slate-200"
                                 >
@@ -468,6 +518,24 @@
                                         <>
                                             <Download size={20} />
                                             <span>APNG で書き出し</span>
+                                        </>
+                                    )}
+                                </button>
+                                
+                                <button
+                                    onClick={handleExportZip}
+                                    disabled={!originalImage || isProcessing}
+                                    className="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-3 rounded-lg flex items-center justify-center gap-2 font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isProcessing ? (
+                                        <>
+                                            <RefreshCw className="animate-spin" size={20} />
+                                            <span>処理中...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Images size={20} />
+                                            <span>連番PNG (ZIP)</span>
                                         </>
                                     )}
                                 </button>
