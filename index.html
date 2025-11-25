@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ラインボイラ</title>
+    
+    <!-- Tailwind CSS (スタイリング用) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    animation: {
+                        'spin-slow': 'spin 3s linear infinite',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- React & ReactDOM (UI構築用) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel (ブラウザでJSXを動かすための変換ツール) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 外部ライブラリ: APNG作成用 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js"></script>
+
+    <style>
+        /* カスタムスクロールバーなど */
+        body { font-family: 'Segoe UI', sans-serif; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #4f46e5;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #e2e8f0;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <!-- アプリケーションのロジック -->
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // --- アイコンコンポーネント (Lucide icons の代わり) ---
+        const Icon = ({ path, size = 24, className = "", fill = "none", ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+                {path}
+            </svg>
+        );
+
+        const Upload = (props) => <Icon path={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></>} {...props} />;
+        const Play = (props) => <Icon path={<polygon points="5 3 19 12 5 21 5 3"/>} {...props} />;
+        const Pause = (props) => <Icon path={<><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>} {...props} />;
+        const Download = (props) => <Icon path={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></>} {...props} />;
+        const RefreshCw = (props) => <Icon path={<><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></>} {...props} />;
+        const Trash2 = (props) => <Icon path={<><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></>} {...props} />;
+        const Settings = (props) => <Icon path={<><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>} {...props} />;
+        const Check = (props) => <Icon path={<polyline points="20 6 9 17 4 12"/>} {...props} />;
+        const Info = (props) => <Icon path={<><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></>} {...props} />;
+
+        // --- パラメータ定数 ---
+        const DEFAULT_PARAMS = {
+            frameCount: 3,
+            jitterStrength: 2,
+            noiseScale: 0.05,
+            speedFps: 8,
+            removeWhiteBg: false,
+            whiteThreshold: 240,
+            seed: 12345,
+        };
+
+        // --- ノイズ生成関数 (簡易実装) ---
+        const pseudoRandom = (seed) => {
+            let value = seed;
+            return () => {
+                value = (value * 9301 + 49297) % 233280;
+                return value / 233280;
+            };
+        };
+
+        const noise2D = (x, y, seed) => {
+            const X = Math.floor(x);
+            const Y = Math.floor(y);
+            const xf = x - X;
+            const yf = y - Y;
+            
+            const rand = pseudoRandom(seed + X * 57 + Y * 131);
+            const tl = rand();
+            const tr = rand();
+            const bl = rand();
+            const br = rand();
+
+            const u = xf * xf * (3 - 2 * xf);
+            const v = yf * yf * (3 - 2 * yf);
+
+            return (tl * (1 - u) + tr * u) * (1 - v) + (bl * (1 - u) + br * u) * v;
+        };
+
+        // --- 画像処理関数 ---
+        const removeWhiteBackground = (imageData, threshold) => {
+            const data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                if (r > threshold && g > threshold && b > threshold) {
+                    data[i + 3] = 0;
+                }
+            }
+        };
+
+        const generateBoilFrame = (originalImageData, width, height, params, frameIndex) => {
+            const outputImg = new ImageData(width, height);
+            const srcData = originalImageData.data;
+            const destData = outputImg.data;
+            
+            const frameSeed = params.seed + frameIndex * 1000;
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const nx = (noise2D(x * params.noiseScale, y * params.noiseScale, frameSeed) - 0.5) * 2;
+                    const ny = (noise2D(x * params.noiseScale + 100, y * params.noiseScale + 100, frameSeed) - 0.5) * 2;
+
+                    const offsetX = nx * params.jitterStrength;
+                    const offsetY = ny * params.jitterStrength;
+
+                    const srcX = Math.round(x + offsetX);
+                    const srcY = Math.round(y + offsetY);
+
+                    if (srcX >= 0 && srcX < width && srcY >= 0 && srcY < height) {
+                        const srcIdx = (srcY * width + srcX) * 4;
+                        const destIdx = (y * width + x) * 4;
+                        destData[destIdx] = srcData[srcIdx];
+                        destData[destIdx + 1] = srcData[srcIdx + 1];
+                        destData[destIdx + 2] = srcData[srcIdx + 2];
+                        destData[destIdx + 3] = srcData[srcIdx + 3];
+                    }
+                }
+            }
+            return outputImg;
+        };
+
+        // --- メインコンポーネント ---
+        const App = () => {
+            const [originalImage, setOriginalImage] = useState(null);
+            const [params, setParams] = useState(DEFAULT_PARAMS);
+            const [frames, setFrames] = useState([]);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [errorMsg, setErrorMsg] = useState(null);
+
+            const canvasRef = useRef(null);
+            const containerRef = useRef(null);
+            const fileInputRef = useRef(null);
+            const requestRef = useRef();
+
+            // 画像アップロード
+            const handleImageUpload = (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+
+                if (file.size > 5 * 1024 * 1024) {
+                    if(!confirm("画像サイズが大きいため（5MB以上）、処理に時間がかかる可能性があります。続行しますか？")) return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        setOriginalImage(img);
+                        setFrames([]);
+                        setIsPlaying(true);
+                        setErrorMsg(null);
+                    };
+                    img.onerror = () => setErrorMsg("画像の読み込みに失敗しました。");
+                    img.src = e.target?.result;
+                };
+                reader.readAsDataURL(file);
+            };
+
+            // フレーム生成 Effect
+            useEffect(() => {
+                if (!originalImage) return;
+
+                const process = async () => {
+                    setIsProcessing(true);
+                    // UIブロック回避
+                    await new Promise(resolve => setTimeout(resolve, 10));
+
+                    try {
+                        const offscreen = document.createElement('canvas');
+                        const w = originalImage.width;
+                        const h = originalImage.height;
+                        offscreen.width = w;
+                        offscreen.height = h;
+                        const ctx = offscreen.getContext('2d');
+                        
+                        ctx.drawImage(originalImage, 0, 0);
+                        let baseImageData = ctx.getImageData(0, 0, w, h);
+
+                        if (params.removeWhiteBg) {
+                            removeWhiteBackground(baseImageData, params.whiteThreshold);
+                        }
+
+                        const newFrames = [];
+                        for (let i = 0; i < params.frameCount; i++) {
+                            newFrames.push(generateBoilFrame(baseImageData, w, h, params, i));
+                        }
+                        setFrames(newFrames);
+                    } catch (e) {
+                        console.error(e);
+                        setErrorMsg("画像処理中にエラーが発生しました。");
+                    } finally {
+                        setIsProcessing(false);
+                    }
+                };
+                process();
+            }, [originalImage, params.frameCount, params.jitterStrength, params.noiseScale, params.removeWhiteBg, params.whiteThreshold, params.seed]);
+
+            // アニメーション Effect
+            const animate = useCallback(() => {
+                if (!canvasRef.current || frames.length === 0) return;
+                
+                const ctx = canvasRef.current.getContext('2d');
+                const frameData = frames[currentFrameIndex];
+                
+                createImageBitmap(frameData).then(bitmap => {
+                    if (!canvasRef.current) return;
+                    const cvs = canvasRef.current;
+                    ctx.clearRect(0, 0, cvs.width, cvs.height);
+                    ctx.drawImage(bitmap, 0, 0);
+                    bitmap.close();
+                });
+
+                if (isPlaying && frames.length > 1) {
+                    const timeoutId = setTimeout(() => {
+                        setCurrentFrameIndex((prev) => (prev + 1) % frames.length);
+                        requestRef.current = requestAnimationFrame(animate);
+                    }, 1000 / params.speedFps);
+                    return () => clearTimeout(timeoutId);
+                }
+            }, [frames, currentFrameIndex, isPlaying, params.speedFps]);
+
+            useEffect(() => {
+                if (frames.length > 0 && canvasRef.current && originalImage) {
+                    canvasRef.current.width = originalImage.width;
+                    canvasRef.current.height = originalImage.height;
+                }
+
+                if (isPlaying) {
+                    const cleanup = animate();
+                    return () => {
+                        if (requestRef.current) cancelAnimationFrame(requestRef.current);
+                        if (cleanup) cleanup();
+                    };
+                }
+            }, [isPlaying, animate, frames, originalImage]);
+
+            // エクスポート
+            const handleExport = async () => {
+                if (frames.length === 0 || typeof window.UPNG === 'undefined') {
+                    alert("ライブラリの読み込み中、またはフレームがありません。");
+                    return;
+                }
+
+                setIsProcessing(true);
+                await new Promise(r => setTimeout(r, 50));
+
+                try {
+                    const width = frames[0].width;
+                    const height = frames[0].height;
+                    const buffers = frames.map(f => f.data.buffer);
+                    const delay = 1000 / params.speedFps;
+                    const delays = new Array(frames.length).fill(delay);
+
+                    const outputData = window.UPNG.encode(buffers, width, height, 0, delays);
+
+                    const blob = new Blob([outputData], { type: 'image/png' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `boil_effect_${Date.now()}.png`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } catch (e) {
+                    console.error(e);
+                    alert("エクスポートに失敗しました。");
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
+
+            const reset = () => {
+                setOriginalImage(null);
+                setFrames([]);
+                setParams(DEFAULT_PARAMS);
+            };
+
+            // レンダリング (UI)
+            return (
+                <div className="min-h-screen bg-slate-50 selection:bg-indigo-100 pb-12">
+                    <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm sticky top-0 z-10">
+                        <div className="flex items-center gap-2">
+                            <RefreshCw className="text-indigo-600 animate-spin-slow" size={24} />
+                            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">
+                                Line Boil Animator
+                            </h1>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={reset} disabled={!originalImage} className="p-2 text-slate-500 hover:text-red-500 transition-colors disabled:opacity-30" title="リセット">
+                                <Trash2 size={20} />
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="container mx-auto max-w-6xl p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        
+                        {/* 左カラム: プレビュー */}
+                        <div className="lg:col-span-2 flex flex-col gap-4">
+                            <div 
+                                ref={containerRef}
+                                className="relative w-full aspect-square lg:aspect-video bg-slate-200 rounded-xl overflow-hidden shadow-inner border border-slate-300 flex items-center justify-center group"
+                                style={{
+                                    backgroundImage: `linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)`,
+                                    backgroundSize: '20px 20px',
+                                    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                                }}
+                            >
+                                {!originalImage ? (
+                                    <div className="text-center p-8 bg-white/80 backdrop-blur-sm rounded-lg shadow-lg">
+                                        <div className="flex justify-center mb-3 text-indigo-400">
+                                            <Upload size={48} />
+                                        </div>
+                                        <p className="text-lg font-medium text-slate-700 mb-2">画像をアップロード</p>
+                                        <p className="text-sm text-slate-500 mb-4">PNG, JPG, WEBP (白背景 or 透明)</p>
+                                        <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/png, image/jpeg, image/webp" className="hidden" />
+                                        <button onClick={() => fileInputRef.current?.click()} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-full font-medium transition-transform active:scale-95 shadow-md shadow-indigo-200">
+                                            ファイルを選択
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <canvas ref={canvasRef} className="max-w-full max-h-full object-contain shadow-lg" />
+                                        {isProcessing && (
+                                            <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px] flex items-center justify-center z-20">
+                                                <div className="bg-white px-6 py-4 rounded-lg shadow-xl flex items-center gap-3">
+                                                    <RefreshCw className="animate-spin text-indigo-600" />
+                                                    <span className="font-medium text-slate-700">処理中...</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur px-4 py-2 rounded-full shadow-lg flex items-center gap-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                            <button onClick={() => setIsPlaying(!isPlaying)} className="hover:text-indigo-600">
+                                                {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                                            </button>
+                                            <span className="text-xs font-mono text-slate-500">
+                                                FRAME: {currentFrameIndex + 1}/{params.frameCount}
+                                            </span>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            {originalImage && (
+                                <div className="bg-blue-50 text-blue-700 text-sm p-3 rounded-lg flex items-start gap-2 border border-blue-100">
+                                    <div className="mt-0.5 shrink-0"><Info size={16} /></div>
+                                    <p>エクスポートは <strong>APNG (Animated PNG)</strong> 形式で行われます。GIFよりも高品質で、完全な透明背景を保持できます。</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 右カラム: 設定 */}
+                        <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
+                            <div className="flex items-center gap-2 mb-6 text-slate-800 font-semibold border-b pb-2">
+                                <Settings size={20} />
+                                <h2>設定パラメータ</h2>
+                            </div>
+
+                            <div className="space-y-6 flex-1 overflow-y-auto pr-2">
+                                <div className="space-y-4">
+                                    <label className="block">
+                                        <div className="flex justify-between mb-1">
+                                            <span className="text-sm font-medium text-slate-700">フレーム数</span>
+                                            <span className="text-sm text-indigo-600 font-mono">{params.frameCount}</span>
+                                        </div>
+                                        <input type="range" min="2" max="10" step="1" value={params.frameCount} onChange={(e) => setParams({...params, frameCount: Number(e.target.value)})} className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none" />
+                                    </label>
+
+                                    <label className="block">
+                                        <div className="flex justify-between mb-1">
+                                            <span className="text-sm font-medium text-slate-700">揺れの強さ (Jitter)</span>
+                                            <span className="text-sm text-indigo-600 font-mono">{params.jitterStrength}px</span>
+                                        </div>
+                                        <input type="range" min="0" max="10" step="0.5" value={params.jitterStrength} onChange={(e) => setParams({...params, jitterStrength: Number(e.target.value)})} className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none" />
+                                    </label>
+
+                                    <label className="block">
+                                        <div className="flex justify-between mb-1">
+                                            <span className="text-sm font-medium text-slate-700">ノイズの細かさ (Scale)</span>
+                                            <span className="text-sm text-indigo-600 font-mono">{params.noiseScale}</span>
+                                        </div>
+                                        <input type="range" min="0.01" max="0.5" step="0.01" value={params.noiseScale} onChange={(e) => setParams({...params, noiseScale: Number(e.target.value)})} className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none" />
+                                    </label>
+
+                                    <label className="block">
+                                        <div className="flex justify-between mb-1">
+                                            <span className="text-sm font-medium text-slate-700">再生速度 (FPS)</span>
+                                            <span className="text-sm text-indigo-600 font-mono">{params.speedFps} fps</span>
+                                        </div>
+                                        <input type="range" min="2" max="24" step="1" value={params.speedFps} onChange={(e) => setParams({...params, speedFps: Number(e.target.value)})} className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none" />
+                                    </label>
+                                </div>
+
+                                <hr className="border-slate-100" />
+
+                                <div className="space-y-4">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${params.removeWhiteBg ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'}`}>
+                                            {params.removeWhiteBg && <Check size={14} className="text-white" />}
+                                        </div>
+                                        <input type="checkbox" checked={params.removeWhiteBg} onChange={(e) => setParams({...params, removeWhiteBg: e.target.checked})} className="hidden" />
+                                        <span className="text-sm font-medium text-slate-700">白背景を除去する</span>
+                                    </label>
+
+                                    {params.removeWhiteBg && (
+                                        <label className="block pl-7">
+                                            <div className="flex justify-between mb-1">
+                                                <span className="text-xs text-slate-500">除去しきい値</span>
+                                                <span className="text-xs text-slate-500 font-mono">{params.whiteThreshold}</span>
+                                            </div>
+                                            <input type="range" min="200" max="255" step="1" value={params.whiteThreshold} onChange={(e) => setParams({...params, whiteThreshold: Number(e.target.value)})} className="w-full accent-slate-400 h-1 bg-slate-200 rounded-lg appearance-none" />
+                                        </label>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="mt-6 pt-6 border-t border-slate-100">
+                                <button
+                                    onClick={handleExport}
+                                    disabled={!originalImage || isProcessing}
+                                    className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-lg flex items-center justify-center gap-2 font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-slate-200"
+                                >
+                                    {isProcessing ? (
+                                        <>
+                                            <RefreshCw className="animate-spin" size={20} />
+                                            <span>処理中...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Download size={20} />
+                                            <span>APNG で書き出し</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
