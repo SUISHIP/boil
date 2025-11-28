@@ -26,10 +26,12 @@
     <!-- Babel (ブラウザでJSXを動かすための変換ツール) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- 外部ライブラリ: APNG作成用 & ZIP作成用 -->
+    <!-- 外部ライブラリ -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- mp4-muxer: WebCodecsを使った高品質MP4生成用 -->
+    <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.0/build/mp4-muxer.min.js"></script>
 
     <style>
         /* カスタムスクロールバーなど */
@@ -361,109 +363,116 @@
                 }
             };
 
-            // MP4/WebM エクスポート (MediaRecorder使用)
+            // MP4 エクスポート (WebCodecs + mp4-muxer)
             const handleExportVideo = async () => {
                 if (frames.length === 0) return;
+                
+                // WebCodecs が使えるか確認
+                if (typeof VideoEncoder === 'undefined' || typeof window.Mp4Muxer === 'undefined') {
+                    alert("お使いのブラウザは WebCodecs または mp4-muxer に対応していない可能性があります。");
+                    return;
+                }
 
                 setIsProcessing(true);
                 await new Promise(r => setTimeout(r, 50));
 
                 try {
-                    const width = frames[0].width;
-                    const height = frames[0].height;
+                    const fps = params.speedFps;
+                    let width = frames[0].width;
+                    let height = frames[0].height;
+
+                    // H.264要件: 幅と高さは偶数である必要がある
+                    if (width % 2 !== 0) width -= 1;
+                    if (height % 2 !== 0) height -= 1;
+
+                    // Muxerの設定
+                    const muxer = new window.Mp4Muxer.Muxer({
+                        target: new window.Mp4Muxer.ArrayBufferTarget(),
+                        video: {
+                            codec: 'avc', // H.264
+                            width: width,
+                            height: height
+                        },
+                        fastStart: 'in-memory', // moov atomを先頭に移動 (互換性向上)
+                    });
+
+                    // VideoEncoderの設定
+                    const videoEncoder = new VideoEncoder({
+                        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                        error: (e) => {
+                            console.error(e);
+                            throw new Error(e.message);
+                        }
+                    });
+
+                    // H.264 Main Profile Level 4.1 (互換性重視)
+                    videoEncoder.configure({
+                        codec: 'avc1.4d0029', 
+                        width: width,
+                        height: height,
+                        bitrate: 5_000_000, // 5Mbps
+                        framerate: fps
+                    });
+
+                    // 描画用Canvas
                     const canvas = document.createElement('canvas');
                     canvas.width = width;
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
-                    
-                    // ImageBitmapに変換 (putImageDataだと透過部分が上書きされず白背景が消えるため)
+
+                    // ImageBitmap変換
                     const bitmaps = await Promise.all(frames.map(f => createImageBitmap(f)));
 
-                    const drawFrameForVideo = (frameIndex) => {
-                        // 背景を白で塗りつぶす (動画は透過非対応のため)
+                    const drawFrame = (index) => {
+                        // 白背景でクリア
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, width, height);
-                        ctx.drawImage(bitmaps[frameIndex], 0, 0);
+                        // 元画像を描画
+                        ctx.drawImage(bitmaps[index], 0, 0, width, height); // リサイズが必要な場合に対応
                     };
 
-                    const stream = canvas.captureStream(params.speedFps);
-                    
-                    // MIMEタイプの決定とコーデック指定の強化
-                    // 互換性の高い順にサポート状況をチェックする
-                    const mimeOptions = [
-                        'video/mp4;codecs=avc1.42E01E', // H.264 Baseline Profile (最も互換性が高いMP4)
-                        'video/mp4;codecs=avc1.4D401E', // H.264 Main Profile
-                        'video/mp4;codecs=avc1.64001E', // H.264 High Profile
-                        'video/mp4',                    // 標準MP4 (ブラウザ依存)
-                        'video/webm;codecs=h264',       // WebM container with H.264
-                        'video/webm;codecs=vp9',        // WebM VP9
-                        'video/webm'                    // WebM Default (VP8/VP9)
-                    ];
-                    
-                    let mimeType = "";
-                    for (const type of mimeOptions) {
-                        if (MediaRecorder.isTypeSupported(type)) {
-                            mimeType = type;
-                            break;
-                        }
-                    }
-                    
-                    if (!mimeType) {
-                        alert("お使いのブラウザは動画の書き出しに対応していません。");
-                        bitmaps.forEach(b => b.close());
-                        setIsProcessing(false);
-                        return;
+                    const durationSec = 5; // 5秒間
+                    const totalFrames = fps * durationSec;
+                    const frameDurationMicro = 1_000_000 / fps; // マイクロ秒
+
+                    for (let i = 0; i < totalFrames; i++) {
+                        const frameIndex = i % frames.length;
+                        drawFrame(frameIndex);
+
+                        // VideoFrame作成
+                        const frame = new VideoFrame(canvas, {
+                            timestamp: i * frameDurationMicro,
+                            duration: frameDurationMicro
+                        });
+
+                        // エンコード
+                        videoEncoder.encode(frame, { keyFrame: i % fps === 0 });
+                        frame.close();
                     }
 
-                    const recorder = new MediaRecorder(stream, { 
-                        mimeType, 
-                        videoBitsPerSecond: 5000000 // 5Mbps (少し高画質に)
-                    });
-                    
-                    const chunks = [];
-                    
-                    recorder.ondataavailable = (e) => {
-                        if (e.data.size > 0) chunks.push(e.data);
-                    };
-                    
-                    recorder.onstop = () => {
-                        const blob = new Blob(chunks, { type: mimeType });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        // MIMEタイプに応じて拡張子を決定
-                        // WebMが選択された場合に無理やり.mp4にすると再生できないため、正しい拡張子を付与する
-                        const ext = mimeType.toLowerCase().includes('mp4') ? 'mp4' : 'webm';
-                        a.download = `boil_video_${Date.now()}.${ext}`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                        
-                        bitmaps.forEach(b => b.close());
-                        setIsProcessing(false);
-                    };
+                    // 終了処理
+                    await videoEncoder.flush();
+                    muxer.finalize();
 
-                    recorder.start();
-
-                    // 約5秒間 (または最低1ループ以上) 録画する
-                    const duration = 5000; 
-                    const startTime = performance.now();
-                    let frameIdx = 0;
+                    const buffer = muxer.target.buffer;
+                    const blob = new Blob([buffer], { type: 'video/mp4' });
+                    const url = URL.createObjectURL(blob);
                     
-                    const intervalId = setInterval(() => {
-                        drawFrameForVideo(frameIdx);
-                        frameIdx = (frameIdx + 1) % frames.length;
-                        
-                        if (performance.now() - startTime > duration) {
-                            clearInterval(intervalId);
-                            recorder.stop();
-                        }
-                    }, 1000 / params.speedFps);
-
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `boil_video_${Date.now()}.mp4`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    
+                    // クリーンアップ
+                    bitmaps.forEach(b => b.close());
+                    
                 } catch (e) {
                     console.error(e);
-                    alert("動画作成に失敗しました。エラー: " + e.message);
+                    alert("動画エンコードに失敗しました: " + e.message);
+                } finally {
                     setIsProcessing(false);
                 }
             };
@@ -541,7 +550,7 @@
                             {originalImage && (
                                 <div className="bg-blue-50 text-blue-700 text-sm p-3 rounded-lg flex items-start gap-2 border border-blue-100">
                                     <div className="mt-0.5 shrink-0"><Info size={16} /></div>
-                                    <p>エクスポートは <strong>APNG</strong>, <strong>連番PNG(ZIP)</strong>, <strong>動画(MP4/WebM)</strong> が選べます。動画のみ白背景になります。</p>
+                                    <p>エクスポートは <strong>APNG</strong>, <strong>連番PNG(ZIP)</strong>, <strong>動画(MP4)</strong> が選べます。動画のみ白背景になります。</p>
                                 </div>
                             )}
                         </div>
