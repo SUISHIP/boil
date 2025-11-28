@@ -388,15 +388,38 @@
 
                     const stream = canvas.captureStream(params.speedFps);
                     
-                    // MIMEタイプの決定
-                    let mimeType = 'video/webm';
-                    if (MediaRecorder.isTypeSupported('video/mp4')) {
-                        mimeType = 'video/mp4';
-                    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
-                        mimeType = 'video/webm;codecs=h264';
+                    // MIMEタイプの決定とコーデック指定の強化
+                    // 互換性の高い順にサポート状況をチェックする
+                    const mimeOptions = [
+                        'video/mp4;codecs=avc1.42E01E', // H.264 Baseline Profile (最も互換性が高いMP4)
+                        'video/mp4;codecs=avc1.4D401E', // H.264 Main Profile
+                        'video/mp4;codecs=avc1.64001E', // H.264 High Profile
+                        'video/mp4',                    // 標準MP4 (ブラウザ依存)
+                        'video/webm;codecs=h264',       // WebM container with H.264
+                        'video/webm;codecs=vp9',        // WebM VP9
+                        'video/webm'                    // WebM Default (VP8/VP9)
+                    ];
+                    
+                    let mimeType = "";
+                    for (const type of mimeOptions) {
+                        if (MediaRecorder.isTypeSupported(type)) {
+                            mimeType = type;
+                            break;
+                        }
+                    }
+                    
+                    if (!mimeType) {
+                        alert("お使いのブラウザは動画の書き出しに対応していません。");
+                        bitmaps.forEach(b => b.close());
+                        setIsProcessing(false);
+                        return;
                     }
 
-                    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 }); // 2.5Mbps
+                    const recorder = new MediaRecorder(stream, { 
+                        mimeType, 
+                        videoBitsPerSecond: 5000000 // 5Mbps (少し高画質に)
+                    });
+                    
                     const chunks = [];
                     
                     recorder.ondataavailable = (e) => {
@@ -408,8 +431,9 @@
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        // 拡張子判定
-                        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+                        // MIMEタイプに応じて拡張子を決定
+                        // WebMが選択された場合に無理やり.mp4にすると再生できないため、正しい拡張子を付与する
+                        const ext = mimeType.toLowerCase().includes('mp4') ? 'mp4' : 'webm';
                         a.download = `boil_video_${Date.now()}.${ext}`;
                         document.body.appendChild(a);
                         a.click();
@@ -439,7 +463,7 @@
 
                 } catch (e) {
                     console.error(e);
-                    alert("動画作成に失敗しました。ブラウザが対応していない可能性があります。");
+                    alert("動画作成に失敗しました。エラー: " + e.message);
                     setIsProcessing(false);
                 }
             };
@@ -517,7 +541,7 @@
                             {originalImage && (
                                 <div className="bg-blue-50 text-blue-700 text-sm p-3 rounded-lg flex items-start gap-2 border border-blue-100">
                                     <div className="mt-0.5 shrink-0"><Info size={16} /></div>
-                                    <p>エクスポートは <strong>APNG</strong>, <strong>連番PNG(ZIP)</strong>, <strong>動画(MP4)</strong> が選べます。動画のみ白背景になります。</p>
+                                    <p>エクスポートは <strong>APNG</strong>, <strong>連番PNG(ZIP)</strong>, <strong>動画(MP4/WebM)</strong> が選べます。動画のみ白背景になります。</p>
                                 </div>
                             )}
                         </div>
