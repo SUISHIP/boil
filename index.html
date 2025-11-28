@@ -165,6 +165,7 @@
         // --- メインコンポーネント ---
         const App = () => {
             const [originalImage, setOriginalImage] = useState(null);
+            const [originalFileName, setOriginalFileName] = useState(''); // ★追加: 元ファイル名
             const [params, setParams] = useState(DEFAULT_PARAMS);
             const [frames, setFrames] = useState([]);
             const [isPlaying, setIsPlaying] = useState(false);
@@ -185,6 +186,8 @@
                 if (file.size > 5 * 1024 * 1024) {
                     if(!confirm("画像サイズが大きいため（5MB以上）、処理に時間がかかる可能性があります。続行しますか？")) return;
                 }
+
+                setOriginalFileName(file.name); // ★追加: ファイル名を保存
 
                 const reader = new FileReader();
                 reader.onload = (e) => {
@@ -279,6 +282,16 @@
                 }
             }, [isPlaying, animate, frames, originalImage]);
 
+            // ファイル名整形ヘルパー
+            const getBaseName = (fileName) => {
+                const parts = fileName.split('.');
+                if (parts.length > 1) {
+                    parts.pop();
+                    return parts.join('.');
+                }
+                return fileName;
+            };
+
             // APNG エクスポート
             const handleExportAPNG = async () => {
                 if (frames.length === 0 || typeof window.UPNG === 'undefined') {
@@ -300,9 +313,14 @@
 
                     const blob = new Blob([outputData], { type: 'image/png' });
                     const url = URL.createObjectURL(blob);
+                    
+                    // ★修正: ファイル名に元ファイル名を使用
+                    const baseName = getBaseName(originalFileName);
+                    const downloadName = `boil_${baseName}.png`;
+
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `boil_effect_${Date.now()}.png`;
+                    a.download = downloadName;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -327,6 +345,7 @@
 
                 try {
                     const zip = new window.JSZip();
+                    const baseName = getBaseName(originalFileName); // 元ファイル名から拡張子を除いた部分
                     
                     const promises = frames.map((frameData, index) => {
                         return new Promise((resolve) => {
@@ -337,7 +356,8 @@
                             ctx.putImageData(frameData, 0, 0);
                             
                             canvas.toBlob((blob) => {
-                                zip.file(`frame_${String(index).padStart(2, '0')}.png`, blob);
+                                // ZIP内のファイル名は連番を使用
+                                zip.file(`${baseName}_frame_${String(index).padStart(2, '0')}.png`, blob);
                                 resolve();
                             }, 'image/png');
                         });
@@ -347,9 +367,13 @@
                     
                     const content = await zip.generateAsync({type: "blob"});
                     const url = URL.createObjectURL(content);
+
+                    // ★修正: ファイル名に元ファイル名を使用
+                    const downloadName = `boil_${baseName}.zip`;
+
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `boil_frames_${Date.now()}.zip`;
+                    a.download = downloadName;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -458,9 +482,13 @@
                     const blob = new Blob([buffer], { type: 'video/mp4' });
                     const url = URL.createObjectURL(blob);
                     
+                    // ★修正: ファイル名に元ファイル名を使用
+                    const baseName = getBaseName(originalFileName);
+                    const downloadName = `boil_${baseName}.mp4`;
+
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `boil_video_${Date.now()}.mp4`;
+                    a.download = downloadName;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -479,6 +507,7 @@
 
             const reset = () => {
                 setOriginalImage(null);
+                setOriginalFileName(''); // ★追加: ファイル名もリセット
                 setFrames([]);
                 setParams(DEFAULT_PARAMS);
             };
