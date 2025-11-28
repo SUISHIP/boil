@@ -76,6 +76,7 @@
         const Check = (props) => <Icon path={<polyline points="20 6 9 17 4 12"/>} {...props} />;
         const Info = (props) => <Icon path={<><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></>} {...props} />;
         const Images = (props) => <Icon path={<><path d="M18 22H4a2 2 0 0 1-2-2V6" /><path d="m22 13-1.296-1.296a2.41 2.41 0 0 0-3.408 0L11 18" /><circle cx="12" cy="8" r="2" /><rect width="16" height="16" x="6" y="2" rx="2" /></>} {...props} />;
+        const Film = (props) => <Icon path={<><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></>} {...props} />;
 
         // --- パラメータ定数 ---
         const DEFAULT_PARAMS = {
@@ -360,6 +361,89 @@
                 }
             };
 
+            // MP4/WebM エクスポート (MediaRecorder使用)
+            const handleExportVideo = async () => {
+                if (frames.length === 0) return;
+
+                setIsProcessing(true);
+                await new Promise(r => setTimeout(r, 50));
+
+                try {
+                    const width = frames[0].width;
+                    const height = frames[0].height;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // ImageBitmapに変換 (putImageDataだと透過部分が上書きされず白背景が消えるため)
+                    const bitmaps = await Promise.all(frames.map(f => createImageBitmap(f)));
+
+                    const drawFrameForVideo = (frameIndex) => {
+                        // 背景を白で塗りつぶす (動画は透過非対応のため)
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, width, height);
+                        ctx.drawImage(bitmaps[frameIndex], 0, 0);
+                    };
+
+                    const stream = canvas.captureStream(params.speedFps);
+                    
+                    // MIMEタイプの決定
+                    let mimeType = 'video/webm';
+                    if (MediaRecorder.isTypeSupported('video/mp4')) {
+                        mimeType = 'video/mp4';
+                    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
+                        mimeType = 'video/webm;codecs=h264';
+                    }
+
+                    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 }); // 2.5Mbps
+                    const chunks = [];
+                    
+                    recorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) chunks.push(e.data);
+                    };
+                    
+                    recorder.onstop = () => {
+                        const blob = new Blob(chunks, { type: mimeType });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        // 拡張子判定
+                        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+                        a.download = `boil_video_${Date.now()}.${ext}`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        
+                        bitmaps.forEach(b => b.close());
+                        setIsProcessing(false);
+                    };
+
+                    recorder.start();
+
+                    // 約5秒間 (または最低1ループ以上) 録画する
+                    const duration = 5000; 
+                    const startTime = performance.now();
+                    let frameIdx = 0;
+                    
+                    const intervalId = setInterval(() => {
+                        drawFrameForVideo(frameIdx);
+                        frameIdx = (frameIdx + 1) % frames.length;
+                        
+                        if (performance.now() - startTime > duration) {
+                            clearInterval(intervalId);
+                            recorder.stop();
+                        }
+                    }, 1000 / params.speedFps);
+
+                } catch (e) {
+                    console.error(e);
+                    alert("動画作成に失敗しました。ブラウザが対応していない可能性があります。");
+                    setIsProcessing(false);
+                }
+            };
+
             const reset = () => {
                 setOriginalImage(null);
                 setFrames([]);
@@ -433,7 +517,7 @@
                             {originalImage && (
                                 <div className="bg-blue-50 text-blue-700 text-sm p-3 rounded-lg flex items-start gap-2 border border-blue-100">
                                     <div className="mt-0.5 shrink-0"><Info size={16} /></div>
-                                    <p>エクスポートは <strong>APNG</strong> または <strong>連番PNG(ZIP)</strong> が選べます。どちらも透明背景をサポートしています。</p>
+                                    <p>エクスポートは <strong>APNG</strong>, <strong>連番PNG(ZIP)</strong>, <strong>動画(MP4)</strong> が選べます。動画のみ白背景になります。</p>
                                 </div>
                             )}
                         </div>
@@ -521,24 +605,26 @@
                                         </>
                                     )}
                                 </button>
-                                
-                                <button
-                                    onClick={handleExportZip}
-                                    disabled={!originalImage || isProcessing}
-                                    className="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-3 rounded-lg flex items-center justify-center gap-2 font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {isProcessing ? (
-                                        <>
-                                            <RefreshCw className="animate-spin" size={20} />
-                                            <span>処理中...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Images size={20} />
-                                            <span>連番PNG (ZIP)</span>
-                                        </>
-                                    )}
-                                </button>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        onClick={handleExportVideo}
+                                        disabled={!originalImage || isProcessing}
+                                        className="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-3 rounded-lg flex items-center justify-center gap-2 font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Film size={20} />
+                                        <span>動画 (5秒)</span>
+                                    </button>
+                                    
+                                    <button
+                                        onClick={handleExportZip}
+                                        disabled={!originalImage || isProcessing}
+                                        className="w-full bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-3 rounded-lg flex items-center justify-center gap-2 font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Images size={20} />
+                                        <span>連番ZIP</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </main>
