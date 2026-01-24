@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>波面ジェネレータ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムレンジスライダーのスタイル */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            margin-top: -6px;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #e5e7eb;
+            border-radius: 2px;
+        }
+        .canvas-container {
+            background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                              linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                              linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+        /* スクロールバーのカスタマイズ（パネル用） */
+        .custom-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans min-h-screen flex flex-col">
+
+    <!-- ヘッダー -->
+    <header class="bg-white shadow-sm py-4 sticky top-0 z-10">
+        <div class="container mx-auto px-4 flex justify-between items-center">
+            <h1 class="text-xl font-bold text-gray-700">波面ジェネレータ</h1>
+            <div class="text-xs text-gray-500 hidden sm:block">WebGL Powered</div>
+        </div>
+    </header>
+
+    <main class="flex-grow container mx-auto px-4 py-6 flex flex-col lg:flex-row gap-8 overflow-hidden h-full">
+        
+        <!-- コントロールパネル (左側) - スクロール可能に -->
+        <div class="w-full lg:w-1/3 space-y-4 h-full overflow-y-auto custom-scroll pr-2" style="max-height: calc(100vh - 100px);">
+            
+            <!-- ファイルアップロード -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                <label class="block mb-2 font-semibold text-gray-700">1. 画像を選択</label>
+                <div class="relative border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:bg-blue-50 transition-colors cursor-pointer" id="dropZone">
+                    <input type="file" id="imageInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                    <div class="text-gray-500">
+                        <svg class="mx-auto h-10 w-10 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <p class="text-sm">クリックまたは画像をドロップ</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- パラメータ調整 -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 space-y-6">
+                <div class="flex justify-between items-center border-b border-gray-100 pb-2">
+                    <label class="font-semibold text-gray-700">2. ゆらぎ設定</label>
+                    <button id="resetParams" class="text-xs text-blue-500 hover:text-blue-700 underline">リセット</button>
+                </div>
+
+                <!-- 共通設定 -->
+                <div>
+                    <div class="flex justify-between text-sm mb-1 font-medium text-gray-600">
+                        <span>全体速度 (Speed)</span>
+                        <span id="valSpeed">2.0</span>
+                    </div>
+                    <input type="range" id="paramSpeed" min="0" max="10" step="0.1" value="2.0">
+                </div>
+
+                <!-- X軸設定 -->
+                <div class="bg-blue-50 p-3 rounded-lg space-y-3">
+                    <h3 class="text-xs font-bold text-blue-800 uppercase tracking-wider">横方向 (X-Axis)</h3>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 text-gray-600">
+                            <span>強さ (Amplitude)</span>
+                            <span id="valStrengthX">0.01</span>
+                        </div>
+                        <input type="range" id="paramStrengthX" min="0" max="0.05" step="0.001" value="0.01">
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 text-gray-600">
+                            <span>細かさ (Frequency)</span>
+                            <span id="valFrequencyX">10.0</span>
+                        </div>
+                        <input type="range" id="paramFrequencyX" min="1" max="50" step="0.5" value="10.0">
+                    </div>
+                </div>
+
+                <!-- Y軸設定 -->
+                <div class="bg-indigo-50 p-3 rounded-lg space-y-3">
+                    <h3 class="text-xs font-bold text-indigo-800 uppercase tracking-wider">縦方向 (Y-Axis)</h3>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 text-gray-600">
+                            <span>強さ (Amplitude)</span>
+                            <span id="valStrengthY">0.005</span>
+                        </div>
+                        <input type="range" id="paramStrengthY" min="0" max="0.05" step="0.001" value="0.005">
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 text-gray-600">
+                            <span>細かさ (Frequency)</span>
+                            <span id="valFrequencyY">8.0</span>
+                        </div>
+                        <input type="range" id="paramFrequencyY" min="1" max="50" step="0.5" value="8.0">
+                    </div>
+                </div>
+
+                <!-- 範囲設定 -->
+                <div>
+                    <label class="text-sm font-semibold text-gray-600 block mb-2 border-b border-gray-100 pb-1">適用範囲と減衰</label>
+                    
+                    <div class="mb-4">
+                        <div class="flex justify-between text-xs mb-1 text-gray-500">
+                            <span>開始位置 (上端)</span>
+                            <span id="valStart">0%</span>
+                        </div>
+                        <input type="range" id="paramStart" min="0" max="1" step="0.01" value="0">
+                    </div>
+
+                    <div class="mb-4">
+                        <div class="flex justify-between text-xs mb-1 text-gray-500">
+                            <span>終了位置 (下端)</span>
+                            <span id="valEnd">50%</span>
+                        </div>
+                        <input type="range" id="paramEnd" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+
+                    <div class="flex gap-4">
+                        <div class="w-1/2">
+                            <div class="flex justify-between text-xs mb-1 text-gray-500">
+                                <span>境界ぼかし</span>
+                                <span id="valSoftness">0.1</span>
+                            </div>
+                            <input type="range" id="paramSoftness" min="0.01" max="0.5" step="0.01" value="0.1">
+                        </div>
+                        <div class="w-1/2">
+                            <div class="flex justify-between text-xs mb-1 text-gray-500" title="下に向かって揺れを弱くする">
+                                <span>下部減衰</span>
+                                <span id="valDamping">0.0</span>
+                            </div>
+                            <input type="range" id="paramDamping" min="0" max="1" step="0.1" value="0.0">
+                        </div>
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-1">※下部減衰を上げると、開始位置(強)→終了位置(弱)のグラデーションになります。</p>
+                </div>
+            </div>
+
+            <!-- エクスポート -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                <label class="block mb-2 font-semibold text-gray-700">3. エクスポート</label>
+                <p class="text-xs text-gray-500 mb-4">プレビューと同じ品質で10秒間録画します。</p>
+                
+                <button id="recordBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    <span>10秒動画を作成 (MP4)</span>
+                </button>
+
+                <!-- プログレスバー -->
+                <div id="progressContainer" class="hidden mt-4">
+                    <div class="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>処理中...</span>
+                        <span id="progressText">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-200" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- ダウンロードリンクエリア -->
+                <div id="downloadArea" class="hidden mt-4 text-center">
+                    <a id="downloadLink" href="#" download="wave-animation.mp4" class="inline-block text-sm text-green-600 font-semibold border border-green-600 px-4 py-2 rounded hover:bg-green-50 transition">
+                        ↓ 動画をダウンロード
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- プレビューエリア (右側) -->
+        <div class="w-full lg:w-2/3 bg-white rounded-xl shadow-sm border border-gray-100 p-1 flex flex-col h-fit lg:h-auto lg:self-start sticky top-24">
+            <div class="flex justify-between items-center px-4 py-2 border-b border-gray-100">
+                <span class="font-semibold text-gray-700">プレビュー</span>
+                <span class="text-xs text-gray-400" id="resolutionDisplay">0 x 0 px</span>
+            </div>
+            <div class="flex-grow flex items-center justify-center p-4 bg-gray-100 canvas-container rounded-b-lg overflow-hidden relative min-h-[400px]">
+                <canvas id="glCanvas" class="max-w-full max-h-[70vh] shadow-lg bg-white"></canvas>
+                <div id="placeholderText" class="absolute text-gray-400 text-center pointer-events-none">
+                    ここに画像が表示されます
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- WebGL Shaders -->
+    <script id="vertex-shader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+            v_texCoord = a_texCoord;
+        }
+    </script>
+
+    <script id="fragment-shader" type="x-shader/x-fragment">
+        precision mediump float;
+        
+        uniform sampler2D u_image;
+        uniform float u_time;
+        
+        // X軸波パラメータ
+        uniform float u_strengthX;
+        uniform float u_frequencyX;
+        
+        // Y軸波パラメータ
+        uniform float u_strengthY;
+        uniform float u_frequencyY;
+        
+        uniform float u_speed;
+        
+        // 範囲と減衰
+        uniform float u_start; // 0.0 top to 1.0 bottom
+        uniform float u_end;   // 0.0 top to 1.0 bottom
+        uniform float u_softness;
+        uniform float u_damping; // 0.0 (none) to 1.0 (full fade at bottom)
+        
+        varying vec2 v_texCoord;
+
+        void main() {
+            vec2 uv = v_texCoord;
+            
+            // Y軸反転 (0=上, 1=下)
+            float invertedY = 1.0 - uv.y; 
+
+            // --- マスク生成 ---
+            // 上端
+            float startMask = smoothstep(u_start, u_start + u_softness, invertedY);
+            // 下端
+            float endMask = 1.0 - smoothstep(u_end - u_softness, u_end, invertedY);
+            // 基本マスク
+            float effectMask = startMask * endMask;
+
+            // --- 減衰計算 (Gradient Damping) ---
+            // 範囲内での相対位置 (0.0=Start, 1.0=End) を計算
+            float range = max(0.001, u_end - u_start); // 0除算防止
+            float relativeY = clamp((invertedY - u_start) / range, 0.0, 1.0);
+            
+            // 下に行くほど弱くなる係数
+            // u_damping が 0 なら常に 1.0, 1.0 なら 1.0->0.0 へ線形補間
+            float dampingFactor = 1.0 - (relativeY * u_damping);
+            
+            // 最終的な強度マスク
+            float finalMask = effectMask * dampingFactor;
+
+            // --- 波の変位計算 ---
+            
+            // X方向の変位 (横揺れ): Y座標と時間で変化
+            float distortionX = sin(uv.y * u_frequencyX + u_time * u_speed) * u_strengthX;
+            // 複雑さを出すための第2波
+            distortionX += sin(uv.y * (u_frequencyX * 2.1) - u_time * (u_speed * 1.5)) * (u_strengthX * 0.4);
+
+            // Y方向の変位 (縦揺れ): X座標と時間で変化 (海のうねり感)
+            float distortionY = sin(uv.x * u_frequencyY + u_time * (u_speed * 0.8)) * u_strengthY;
+            // 複雑さを出すための第2波
+            distortionY += cos(uv.x * (u_frequencyY * 0.5) + u_time * (u_speed * 0.4)) * (u_strengthY * 0.5);
+
+            // マスクを適用
+            vec2 distortedUV = uv;
+            distortedUV.x += distortionX * finalMask;
+            distortedUV.y += distortionY * finalMask;
+
+            gl_FragColor = texture2D(u_image, distortedUV);
+        }
+    </script>
+
+    <script>
+        // --- 変数定義 ---
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
+        
+        // UI要素
+        const imageInput = document.getElementById('imageInput');
+        const dropZone = document.getElementById('dropZone');
+        const resolutionDisplay = document.getElementById('resolutionDisplay');
+        const placeholderText = document.getElementById('placeholderText');
+        
+        // パラメータUI
+        const params = {
+            speed: { el: document.getElementById('paramSpeed'), val: document.getElementById('valSpeed') },
+            
+            strengthX: { el: document.getElementById('paramStrengthX'), val: document.getElementById('valStrengthX') },
+            frequencyX: { el: document.getElementById('paramFrequencyX'), val: document.getElementById('valFrequencyX') },
+            
+            strengthY: { el: document.getElementById('paramStrengthY'), val: document.getElementById('valStrengthY') },
+            frequencyY: { el: document.getElementById('paramFrequencyY'), val: document.getElementById('valFrequencyY') },
+            
+            start: { el: document.getElementById('paramStart'), val: document.getElementById('valStart') },
+            end: { el: document.getElementById('paramEnd'), val: document.getElementById('valEnd') },
+            softness: { el: document.getElementById('paramSoftness'), val: document.getElementById('valSoftness') },
+            damping: { el: document.getElementById('paramDamping'), val: document.getElementById('valDamping') }
+        };
+        const resetBtn = document.getElementById('resetParams');
+
+        // 録画関連
+        const recordBtn = document.getElementById('recordBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const downloadArea = document.getElementById('downloadArea');
+        const downloadLink = document.getElementById('downloadLink');
+
+        // WebGL用変数
+        let program;
+        let positionLocation;
+        let texCoordLocation;
+        let texture;
+        let uniforms = {};
+        
+        // 状態
+        let loadedImage = null;
+        let isRecording = false;
+        let animationId;
+
+        // --- 初期化 ---
+        function init() {
+            if (!gl) {
+                alert("WebGLがサポートされていません。");
+                return;
+            }
+
+            // シェーダーのコンパイル
+            const vertexShaderSource = document.getElementById('vertex-shader').text;
+            const fragmentShaderSource = document.getElementById('fragment-shader').text;
+            
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+            
+            program = createProgram(gl, vertexShader, fragmentShader);
+            gl.useProgram(program);
+
+            // 属性とUniformの場所を取得
+            positionLocation = gl.getAttribLocation(program, "a_position");
+            texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+            
+            uniforms.time = gl.getUniformLocation(program, "u_time");
+            uniforms.speed = gl.getUniformLocation(program, "u_speed");
+            
+            uniforms.strengthX = gl.getUniformLocation(program, "u_strengthX");
+            uniforms.frequencyX = gl.getUniformLocation(program, "u_frequencyX");
+            
+            uniforms.strengthY = gl.getUniformLocation(program, "u_strengthY");
+            uniforms.frequencyY = gl.getUniformLocation(program, "u_frequencyY");
+            
+            uniforms.start = gl.getUniformLocation(program, "u_start");
+            uniforms.end = gl.getUniformLocation(program, "u_end");
+            uniforms.softness = gl.getUniformLocation(program, "u_softness");
+            uniforms.damping = gl.getUniformLocation(program, "u_damping");
+
+            // バッファの設定 (矩形を描画するための頂点データ)
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                -1.0, -1.0,
+                 1.0, -1.0,
+                -1.0,  1.0,
+                -1.0,  1.0,
+                 1.0, -1.0,
+                 1.0,  1.0,
+            ]), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(positionLocation);
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+            const texCoordBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                0.0, 0.0,
+                1.0, 0.0,
+                0.0, 1.0,
+                0.0, 1.0,
+                1.0, 0.0,
+                1.0, 1.0,
+            ]), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(texCoordLocation);
+            gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+            resizeCanvas();
+            render(0);
+        }
+
+        // --- WebGL ユーティリティ ---
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error(gl.getProgramInfoLog(program));
+                return null;
+            }
+            return program;
+        }
+
+        // --- 画像処理 ---
+        function handleImageUpload(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    loadedImage = img;
+                    placeholderText.style.display = 'none';
+                    updateTexture(img);
+                    resizeCanvas();
+                    recordBtn.disabled = false;
+                    
+                    // 初期値を画像下半分にセットなど調整してもよいが、ここでは保持
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function updateTexture(img) {
+            if (texture) gl.deleteTexture(texture);
+            texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        }
+
+        function resizeCanvas() {
+            if (!loadedImage) {
+                canvas.width = 640;
+                canvas.height = 360;
+                return;
+            }
+            const maxDim = 1920;
+            let w = loadedImage.width;
+            let h = loadedImage.height;
+            if (w > maxDim || h > maxDim) {
+                const ratio = w / h;
+                if (w > h) { w = maxDim; h = maxDim / ratio; }
+                else { h = maxDim; w = maxDim * ratio; }
+            }
+            canvas.width = w;
+            canvas.height = h;
+            gl.viewport(0, 0, w, h);
+            resolutionDisplay.innerText = `${Math.round(w)} x ${Math.round(h)} px`;
+        }
+
+        // --- 描画ループ ---
+        function render(time) {
+            const t = time * 0.001;
+            
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            if (program && loadedImage) {
+                gl.useProgram(program);
+                
+                gl.uniform1f(uniforms.time, t);
+                gl.uniform1f(uniforms.speed, parseFloat(params.speed.el.value));
+                
+                gl.uniform1f(uniforms.strengthX, parseFloat(params.strengthX.el.value));
+                gl.uniform1f(uniforms.frequencyX, parseFloat(params.frequencyX.el.value));
+                
+                gl.uniform1f(uniforms.strengthY, parseFloat(params.strengthY.el.value));
+                gl.uniform1f(uniforms.frequencyY, parseFloat(params.frequencyY.el.value));
+                
+                gl.uniform1f(uniforms.start, parseFloat(params.start.el.value));
+                gl.uniform1f(uniforms.end, parseFloat(params.end.el.value));
+                gl.uniform1f(uniforms.softness, parseFloat(params.softness.el.value));
+                gl.uniform1f(uniforms.damping, parseFloat(params.damping.el.value));
+
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+            }
+
+            if (!isRecording) {
+                animationId = requestAnimationFrame(render);
+            }
+        }
+
+        // --- イベントリスナー ---
+        imageInput.addEventListener('change', (e) => handleImageUpload(e.target.files[0]));
+        
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('bg-blue-50'); });
+        dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('bg-blue-50'); });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('bg-blue-50');
+            handleImageUpload(e.dataTransfer.files[0]);
+        });
+
+        // パラメータ更新
+        Object.keys(params).forEach(key => {
+            const { el, val } = params[key];
+            el.addEventListener('input', () => {
+                let displayVal = el.value;
+                if (key === 'start' || key === 'end') displayVal = Math.round(displayVal * 100) + '%';
+                val.innerText = displayVal;
+            });
+        });
+
+        // リセット
+        resetBtn.addEventListener('click', () => {
+            params.speed.el.value = 2.0;
+            params.strengthX.el.value = 0.01;
+            params.frequencyX.el.value = 10.0;
+            params.strengthY.el.value = 0.005;
+            params.frequencyY.el.value = 8.0;
+            params.start.el.value = 0.0;
+            params.end.el.value = 0.5;
+            params.softness.el.value = 0.1;
+            params.damping.el.value = 0.5; // 少しグラデーションを効かせるデフォルト
+
+            Object.keys(params).forEach(key => {
+                params[key].el.dispatchEvent(new Event('input'));
+            });
+        });
+
+        // --- 録画機能 ---
+        recordBtn.addEventListener('click', startRecording);
+
+        function startRecording() {
+            if (!loadedImage || isRecording) return;
+            isRecording = true;
+            
+            recordBtn.disabled = true;
+            recordBtn.innerHTML = '<span>録画中...</span>';
+            progressContainer.classList.remove('hidden');
+            downloadArea.classList.add('hidden');
+            
+            const stream = canvas.captureStream(60); 
+            
+            // 互換性の高い順にMIMEタイプを試行
+            // H.264 (MP4) を最優先
+            const mimeTypes = [
+                'video/mp4;codecs=avc1.4d002a', // H.264 Main Profile
+                'video/mp4;codecs=avc1.42001E', // H.264 Baseline Profile
+                'video/mp4;codecs=h264',
+                'video/mp4',
+                'video/webm;codecs=h264',       // WebM container with H.264
+                'video/webm;codecs=vp9',
+                'video/webm;codecs=vp8',
+                'video/webm'
+            ];
+            
+            let selectedMimeType = "";
+            for (const type of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    selectedMimeType = type;
+                    break;
+                }
+            }
+            
+            if (!selectedMimeType) {
+                alert("このブラウザは動画録画をサポートしていません。");
+                isRecording = false;
+                recordBtn.disabled = false;
+                return;
+            }
+            
+            console.log("Using MIME type:", selectedMimeType);
+
+            try {
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: selectedMimeType,
+                    videoBitsPerSecond: 5000000 // 5Mbps (互換性のため少し下げる)
+                });
+
+                const chunks = [];
+                mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: selectedMimeType });
+                    const url = URL.createObjectURL(blob);
+                    
+                    // MIMEタイプに基づいて拡張子を決定
+                    // WebMコンテナの場合は、無理にmp4にすると再生できなくなるためwebmにする
+                    const isMp4Container = selectedMimeType.toLowerCase().startsWith('video/mp4');
+                    const ext = isMp4Container ? 'mp4' : 'webm';
+                    
+                    downloadLink.href = url;
+                    downloadLink.download = `wave_animation_${Date.now()}.${ext}`;
+                    
+                    if (isMp4Container) {
+                        downloadLink.innerText = `↓ 動画をダウンロード (.mp4)`;
+                        downloadLink.className = "inline-block text-sm text-green-600 font-semibold border border-green-600 px-4 py-2 rounded hover:bg-green-50 transition";
+                    } else {
+                        // WebMの場合のUI（注意喚起）
+                        downloadLink.innerText = `↓ 動画をダウンロード (.webm)`;
+                        downloadLink.className = "inline-block text-sm text-orange-600 font-semibold border border-orange-600 px-4 py-2 rounded hover:bg-orange-50 transition";
+                        // ユーザーへの案内
+                        const note = document.createElement('p');
+                        note.className = "text-xs text-orange-500 mt-2";
+                        note.innerText = "※お使いのブラウザはMP4録画に未対応のため、WebM形式で出力されました。iPhone等で再生するには変換が必要です。";
+                        const oldNote = downloadArea.querySelector('p.text-orange-500');
+                        if(oldNote) oldNote.remove();
+                        downloadArea.appendChild(note);
+                    }
+                    
+                    downloadArea.classList.remove('hidden');
+                    recordBtn.disabled = false;
+                    recordBtn.innerHTML = `
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        <span>10秒動画を作成</span>
+                    `;
+                    progressContainer.classList.add('hidden');
+                    isRecording = false;
+                    render(performance.now());
+                };
+
+                mediaRecorder.start();
+                cancelAnimationFrame(animationId);
+                
+                const duration = 10000;
+                const startRecordTime = performance.now();
+                
+                function recordLoop(now) {
+                    if (!isRecording) return;
+                    const elapsed = now - startRecordTime;
+                    const progress = Math.min(elapsed / duration, 1.0);
+                    
+                    progressBar.style.width = `${progress * 100}%`;
+                    progressText.innerText = `${Math.floor(progress * 100)}%`;
+
+                    render(now);
+                    
+                    if (elapsed < duration) requestAnimationFrame(recordLoop);
+                    else mediaRecorder.stop();
+                }
+                requestAnimationFrame(recordLoop);
+            } catch (err) {
+                console.error(err);
+                alert("録画エラー: " + err.message);
+                isRecording = false;
+                recordBtn.disabled = false;
+                recordBtn.innerHTML = '<span>10秒動画を作成 (MP4)</span>';
+                progressContainer.classList.add('hidden');
+            }
+        }
+
+        init();
+        recordBtn.disabled = true;
+
+    </script>
+</body>
+</html>
