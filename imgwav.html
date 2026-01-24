@@ -1,726 +1,491 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<title>WAV ⇄ Image CNV/title>
-<style>
-  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 20px; color:#111 }
-  h1 { font-size: 20px; margin-bottom: 6px }
-  section { margin-bottom: 18px; padding: 12px; border: 1px solid #ddd; border-radius: 6px }
-  label { display:block; margin-top:8px }
-  button { margin-top:8px }
-  pre { background:#f7f7f7; padding:8px; overflow:auto }
-  .small { font-size: 13px; color:#444 }
-  input[type=file] { display:block }
-</style>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WAV ⇄ Image Converter</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 20px; color: #111; background-color: #f0f2f5; line-height: 1.5; }
+        h1 { font-size: 24px; margin-bottom: 10px; color: #333; }
+        section { background: #fff; margin-bottom: 20px; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h2 { font-size: 18px; margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+        label { display: block; margin-top: 12px; font-weight: bold; }
+        input[type=file], input[type=number] { display: block; width: 100%; margin-top: 5px; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        button { margin-top: 12px; padding: 10px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0056b3; }
+        pre { background: #f8f9fa; padding: 12px; overflow: auto; border-radius: 4px; border: 1px solid #e9ecef; }
+        .small { font-size: 13px; color: #666; margin-bottom: 10px; }
+        #log { white-space: pre-wrap; margin-top: 15px; font-family: monospace; font-size: 12px; color: #d63384; background: #fff5f8; padding: 10px; border-radius: 4px; display: none; }
+        audio { width: 100%; margin-top: 10px; }
+        .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+    </style>
 </head>
 <body>
-  <h1>WAV ⇄ Image CNV</h1>
-  <p class="small">4つの方法：1) スペクトログラム（位相保存） 2) PCM直マッピング 3) ステガノグラフィ（LSB） 4) PNGコンテナ（カスタムチャンク） — 各方向の操作が可能です。</p>
 
-  <section>
-    <h2>共通</h2>
-    <label>WAV ファイルを選択（WAV/任意のオーディオも可）：
-      <input type="file" id="wavInput" accept="audio/*">
-    </label>
-    <label>画像ファイル（ステガノ／コンテナの作業時に別途使用）：
-      <input type="file" id="imageInput" accept="image/*">
-    </label>
-    <label>
-      Canvas 出力幅（px、画像化時に使用。デフォルト1024）
-      <input id="canvasWidth" type="number" value="1024" min="16" max="8192">
-    </label>
-    <div id="log" style="white-space:pre-wrap; margin-top:10px; font-size:13px; color:#222"></div>
-  </section>
+    <h1>WAV ⇄ Image Converter</h1>
+    <p class="small">音声データを画像に変換して保存・共有し、再び音声に戻すための実験ツールです。4つの手法を提供します。</p>
 
-  <section>
-    <h2>1) スペクトログラム（位相保持）</h2>
-    <div class="small">出力：2つのPNG（magnitude.png / phase.png）を生成してダウンロードします。復元はこの2つの画像から可能です。</div>
-    <label>Window size:
-      <input type="number" id="specWindow" value="1024" min="32" step="2">
-    </label>
-    <label>Hop size:
-      <input type="number" id="specHop" value="256" min="1" step="1">
-    </label>
-    <button id="specEncode">WAV → スペクトログラム画像 (位相保持)</button>
-    <button id="specDecode">スペクトログラム画像（mag＋phase） → WAV</button>
-  </section>
+    <section>
+        <h2>0) ファイル準備・共通設定</h2>
+        <div class="controls-grid">
+            <div>
+                <label>WAV / 音声ファイル:</label>
+                <input type="file" id="wavInput" accept="audio/*">
+            </div>
+            <div>
+                <label>画像ファイル (復元・加工用):</label>
+                <input type="file" id="imageInput" accept="image/*" multiple>
+            </div>
+            <div>
+                <label>Canvas 幅 (px):</label>
+                <input id="canvasWidth" type="number" value="1024" min="16" max="8192">
+            </div>
+        </div>
+        <div id="log"></div>
+    </section>
 
-  <section>
-    <h2>2) PCM 直マッピング（完全可逆）</h2>
-    <div class="small">出力：1枚のPNG（内部にヘッダ＋PCMデータ）</div>
-    <button id="pcmEncode">WAV → PCMマッピングPNG</button>
-    <button id="pcmDecode">PCMマッピングPNG → WAV</button>
-  </section>
+    <section>
+        <h2>1) スペクトログラム (位相保持)</h2>
+        <div class="small">周波数成分と位相情報を2枚の画像(real/imag)に分けて保存します。</div>
+        <div class="controls-grid">
+            <div>
+                <label>Window size:</label>
+                <input type="number" id="specWindow" value="1024" min="32" step="2">
+            </div>
+            <div>
+                <label>Hop size:</label>
+                <input type="number" id="specHop" value="256" min="1" step="1">
+            </div>
+        </div>
+        <button id="specEncode">WAV → 画像セット生成</button>
+        <button id="specDecode">画像セット → WAV復元</button>
+        <p class="small">※復元には real.png, imag.png, meta.json の3つ（または画像2枚）が必要です。</p>
+    </section>
 
-  <section>
-    <h2>3) ステガノグラフィ（LSB 埋め込み）</h2>
-    <div class="small">必要：カバー画像（PNG推奨）を選択。LSBに埋め込みます。復元は同じ画像から可能です。</div>
-    <button id="stegEncode">WAV を選択画像に埋め込む（LSB）</button>
-    <button id="stegDecode">画像から埋め込みWAVを抽出</button>
-  </section>
+    <section>
+        <h2>2) PCM 直マッピング (完全可逆)</h2>
+        <div class="small">音声波形(16bit)をRGB値としてそのままピクセルに配置します。</div>
+        <button id="pcmEncode">WAV → PCMマッピング画像</button>
+        <button id="pcmDecode">PCM画像 → WAV復元</button>
+    </section>
 
-  <section>
-    <h2>4) PNG コンテナ（カスタムチャンク挿入）</h2>
-    <div class="small">カバー画像（PNG）にカスタムチャンク `aUdW` を追加して WAV バイトを格納します。復元はチャンク読み出し。</div>
-    <button id="containerEncode">カバーPNG に WAV を挿入（PNGチャンク）</button>
-    <button id="containerDecode">PNG からカスタムチャンクを抽出（WAV）</button>
-  </section>
+    <section>
+        <h2>3) ステガノグラフィ (LSB)</h2>
+        <div class="small">既存の画像(PNG)の最下位ビットに音声データを隠します。</div>
+        <button id="stegEncode">WAV を画像に埋め込む</button>
+        <button id="stegDecode">画像からWAVを抽出</button>
+    </section>
 
-  <section>
-    <h2>再生 / テスト</h2>
-    <audio id="audioPlay" controls></audio>
-  </section>
+    <section>
+        <h2>4) PNG コンテナ (チャンク挿入)</h2>
+        <div class="small">PNGの構造を壊さず、カスタムチャンクとして音声バイナリを付加します。</div>
+        <button id="containerEncode">PNGにWAVをパケット挿入</button>
+        <button id="containerDecode">PNGからWAVパケット抽出</button>
+    </section>
+
+    <section>
+        <h2>再生 / テスト</h2>
+        <audio id="audioPlay" controls></audio>
+    </section>
 
 <script>
-/*
-  動作の概要（実装ノート）
-  - WAV読み取りは WebAudio (AudioContext.decodeAudioData) を利用して Float32AudioBuffer を得る。
-  - 画像は canvas を使って RGBA (8-bit) 単位で入出力する。
-  - PCM直マッピングは 16-bit に量子化して RGBA にパック (Left->R,G ; Right->B,A)。
-  - ステガノは RGB の LSB を使う（1ビット/チャネル -> 3ビット/ピクセル）。
-  - PNGコンテナは PNGチャンクを追加する（チャンク名 'aUdW' を使用）。CRC32 を計算して正しいチャンク構造を組む。
-  - スペクトログラムは STFT を行い、各フレームの complex（real, imag）を 32-bit float として PNG の RGBA にパック（1ピクセル＝1 float32）。復元時に逆FFTしてオーバーラップ加算する。
-*/
-
-/* ---- ユーティリティ ---- */
-
+/* ---- UI & Utility ---- */
 const logEl = document.getElementById('log');
-function log(...args){ logEl.textContent += args.map(x=>typeof x==='object'?JSON.stringify(x):String(x)).join(' ') + "\\n"; }
-
-function readFileAsArrayBuffer(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsArrayBuffer(file); }); }
-function readFileAsDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(file); }); }
-function arrayBufferToBlobURL(buffer, type){ const blob=new Blob([buffer], {type}); return URL.createObjectURL(blob); }
-function downloadBlob(blob, filename){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }
-
-/* WAV作成ヘルパー（16-bit PCM, little endian） */
-function makeWavFromFloat32(channelsFloat32, sampleRate){
-  const numChannels = channelsFloat32.length;
-  const len = channelsFloat32[0].length;
-  const bytesPerSample = 2;
-  const blockAlign = numChannels * bytesPerSample;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = len * blockAlign;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const dv = new DataView(buffer);
-  let p=0;
-  function writeStr(s){ for(let i=0;i<s.length;i++){ dv.setUint8(p++, s.charCodeAt(i)); } }
-  writeStr('RIFF'); dv.setUint32(p, 36 + dataSize, true); p+=4; writeStr('WAVE');
-  writeStr('fmt '); dv.setUint32(p, 16, true); p+=4; dv.setUint16(p, 1, true); p+=2; dv.setUint16(p, numChannels, true); p+=2; dv.setUint32(p, sampleRate, true); p+=4; dv.setUint32(p, byteRate, true); p+=4; dv.setUint16(p, blockAlign, true); p+=2; dv.setUint16(p, bytesPerSample * 8, true); p+=2;
-  writeStr('data'); dv.setUint32(p, dataSize, true); p+=4;
-  // interleave and write
-  for(let i=0;i<len;i++){
-    for(let ch=0; ch<numChannels; ch++){
-      let sample = Math.max(-1, Math.min(1, channelsFloat32[ch][i]));
-      let s = Math.round(sample * 32767);
-      dv.setInt16(p, s, true); p+=2;
-    }
-  }
-  return buffer;
+function log(...args){
+    logEl.style.display = 'block';
+    const msg = args.map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)).join(' ');
+    logEl.textContent += msg + "\n";
+    console.log(msg);
 }
 
-/* Audio decode utility */
-async function decodeAudioBufferFromArrayBuffer(ab){
-  const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1,1,44100);
-  return new Promise((res, rej) => {
-    // Use AudioContext.decodeAudioData (works with cross-browser)
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
-    ac.decodeAudioData(ab.slice(0), decoded => {
-      res(decoded);
-      // close if possible
-      if(ac.close) ac.close();
-    }, err => {
-      rej(err);
+function clearLog() {
+    logEl.textContent = '';
+    logEl.style.display = 'none';
+}
+
+function readFileAsArrayBuffer(file){
+    return new Promise((res,rej)=>{
+        const fr=new FileReader();
+        fr.onload=()=>res(fr.result);
+        fr.onerror=rej;
+        fr.readAsArrayBuffer(file);
     });
-  });
 }
 
-/* canvas helpers */
-function makeCanvas(width, height){ const c = document.createElement('canvas'); c.width=width; c.height=height; return c; }
-
-/* pack float32 into 4 bytes RGBA little-endian (for storage in ImageData) */
-function float32ToRgbaBytes(f){
-  const ab = new ArrayBuffer(4); const dv = new DataView(ab); dv.setFloat32(0, f, true);
-  return [dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)];
-}
-function rgbaBytesToFloat32(r,g,b,a){
-  const ab = new ArrayBuffer(4); const dv = new DataView(ab);
-  dv.setUint8(0, r); dv.setUint8(1, g); dv.setUint8(2, b); dv.setUint8(3, a);
-  return dv.getFloat32(0, true);
+function downloadBlob(blob, filename){
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=filename;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 10000);
 }
 
-/* uint32->4bytes */
+/* WAV作成 (16-bit PCM Mono/Stereo) */
+function makeWavFromFloat32(channelsFloat32, sampleRate){
+    const numChannels = channelsFloat32.length;
+    const len = channelsFloat32[0].length;
+    const blockAlign = numChannels * 2;
+    const dataSize = len * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const dv = new DataView(buffer);
+    let p=0;
+    const writeStr = s => { for(let i=0;i<s.length;i++) dv.setUint8(p++, s.charCodeAt(i)); };
+
+    writeStr('RIFF'); dv.setUint32(p, 36 + dataSize, true); p+=4;
+    writeStr('WAVE');
+    writeStr('fmt '); dv.setUint32(p, 16, true); p+=4;
+    dv.setUint16(p, 1, true); p+=2; // PCM
+    dv.setUint16(p, numChannels, true); p+=2;
+    dv.setUint32(p, sampleRate, true); p+=4;
+    dv.setUint32(p, sampleRate * blockAlign, true); p+=4;
+    dv.setUint16(p, blockAlign, true); p+=2;
+    dv.setUint16(p, 16, true); p+=2;
+    writeStr('data'); dv.setUint32(p, dataSize, true); p+=4;
+
+    for(let i=0;i<len;i++){
+        for(let ch=0; ch<numChannels; ch++){
+            let s = Math.max(-1, Math.min(1, channelsFloat32[ch][i]));
+            dv.setInt16(p, s < 0 ? s * 32768 : s * 32767, true); p+=2;
+        }
+    }
+    return buffer;
+}
+
+async function decodeAudio(ab){
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await ac.decodeAudioData(ab);
+    await ac.close();
+    return buf;
+}
+
+function makeCanvas(w, h){
+    const c = document.createElement('canvas');
+    c.width=w; c.height=h;
+    return c;
+}
+
 function uint32ToBytesLE(v){ return [v & 0xff, (v>>8)&0xff, (v>>16)&0xff, (v>>24)&0xff]; }
-function bytesToUint32LE(b0,b1,b2,b3){ return (b0)|(b1<<8)|(b2<<16)|(b3<<24); }
+function bytesToUint32LE(b, i){ return (b[i])|(b[i+1]<<8)|(b[i+2]<<16)|(b[i+3]<<24); }
 
-/* CRC32 for PNG chunk creation */
-const CRC32_TABLE = (() => {
-  let t = new Uint32Array(256);
-  for(let n=0;n<256;n++){
-    let c = n;
-    for(let k=0;k<8;k++){
-      if(c & 1) c = 0xEDB88320 ^ (c >>> 1);
-      else c = c >>> 1;
-    }
-    t[n]=c;
-  }
-  return t;
-})();
-function crc32(buf){
-  let crc = 0xffffffff;
-  for(let i=0;i<buf.length;i++){
-    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ buf[i]) & 0xff];
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-/* ---- PCM 直マッピング ----
-   ヘッダ（先頭16バイト）:
-   - magic "AUDM" (4)
-   - sampleRate uint32 LE (4)
-   - channels uint8 (1)
-   - bitsPerSample uint8 (1) (we use 16)
-   - sampleCount uint32 LE (4)
-   (合計14 -> pad to 16 by 2 bytes)
-*/
+/* ---- PCM Mapping ---- */
 async function pcmEncode(file, canvasWidth){
-  if(!file) { log('WAVファイルを選択してください'); return; }
-  log('PCMエンコード開始...');
-  const ab = await readFileAsArrayBuffer(file);
-  const audioBuf = await decodeAudioBufferFromArrayBuffer(ab);
-  const sr = audioBuf.sampleRate;
-  const ch = audioBuf.numberOfChannels;
-  const len = audioBuf.length;
-  // convert to 16-bit
-  const int16 = new Int16Array(len * ch);
-  for(let i=0;i<len;i++){
-    for(let c=0;c<ch;c++){
-      const s = Math.max(-1, Math.min(1, audioBuf.getChannelData(c)[i]));
-      int16[i*ch + c] = Math.round(s * 32767);
+    if(!file) throw "音声ファイルを選択してください";
+    log("PCMエンコード中...");
+    const audioBuf = await decodeAudio(await readFileAsArrayBuffer(file));
+    const ch = audioBuf.numberOfChannels;
+    const sr = audioBuf.sampleRate;
+    const len = audioBuf.length;
+
+    const totalBytes = 16 + (len * ch * 2);
+    const width = canvasWidth;
+    const height = Math.ceil((totalBytes / 4) / width);
+    const canvas = makeCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    const imgd = ctx.createImageData(width, height);
+    const u8 = new Uint8Array(imgd.data.buffer);
+
+    u8.set([65, 85, 68, 77], 0); // "AUDM"
+    u8.set(uint32ToBytesLE(sr), 4);
+    u8[8] = ch;
+    u8[9] = 16;
+    u8.set(uint32ToBytesLE(len), 10);
+
+    let off = 16;
+    for(let i=0; i<len; i++){
+        for(let c=0; c<ch; c++){
+            let s = Math.max(-1, Math.min(1, audioBuf.getChannelData(c)[i]));
+            let v = s < 0 ? s * 32768 : s * 32767;
+            u8[off++] = v & 0xff;
+            u8[off++] = (v >> 8) & 0xff;
+        }
     }
-  }
-  // create pixel data
-  const samplesPerPixel = ch===1 ? 1 : 1; // we'll store per-sample across channels in single pixel using R,G,B,A
-  const bytesPerSample = 2 * ch;
-  const totalSamples = len;
-  const totalBytes = totalSamples * bytesPerSample;
-  // compute canvas size
-  const width = canvasWidth;
-  const pixelsNeeded = Math.ceil((16 + totalBytes) / 4); // 4 bytes per pixel (RGBA)
-  const height = Math.ceil(pixelsNeeded / width);
-  const canvas = makeCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  const imgd = ctx.createImageData(width, height);
-  const data = imgd.data; // Uint8ClampedArray
-  // build byte array: header (16 bytes) + PCM bytes (little endian)
-  const totalBuf = new Uint8Array(16 + totalBytes);
-  // header
-  totalBuf.set([ 'A'.charCodeAt(0), 'U'.charCodeAt(0), 'D'.charCodeAt(0), 'M'.charCodeAt(0) ], 0);
-  totalBuf.set(uint32ToBytesLE(sr), 4);
-  totalBuf[8] = ch & 0xff;
-  totalBuf[9] = 16; // bits
-  totalBuf.set(uint32ToBytesLE(totalSamples), 10);
-  // bytes 14-15 already zero (padding)
-  // pcm payload
-  let off = 16;
-  for(let i=0;i<totalSamples;i++){
-    for(let c=0;c<ch;c++){
-      const v = int16[i*ch + c];
-      totalBuf[off++] = v & 0xff;
-      totalBuf[off++] = (v >> 8) & 0xff;
-    }
-  }
-  // copy into image pixels
-  for(let i=0;i<width*height*4;i++){
-    data[i] = totalBuf[i] || 0;
-  }
-  ctx.putImageData(imgd, 0, 0);
-  const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
-  downloadBlob(blob, 'pcm_mapped.png');
-  log('PCM PNG を生成しました: pcm_mapped.png (canvas:', width, 'x', height, ')');
+    ctx.putImageData(imgd, 0, 0);
+    canvas.toBlob(b => downloadBlob(b, 'pcm_audio.png'), 'image/png');
+    log("完了: pcm_audio.png");
 }
 
-async function pcmDecode(imageFile){
-  if(!imageFile){ log('PNG画像を選択してください（PCMマッピング）'); return; }
-  log('PCM復元開始...');
-  const dataURL = await readFileAsDataURL(imageFile);
-  const img = new Image();
-  await new Promise((res,rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
-  const canvas = makeCanvas(img.width, img.height);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img,0,0);
-  const imgd = ctx.getImageData(0,0,canvas.width, canvas.height);
-  const bytes = new Uint8Array(imgd.data.buffer);
-  // parse header
-  const magic = String.fromCharCode(bytes[0],bytes[1],bytes[2],bytes[3]);
-  if(magic !== 'AUDM'){ log('このPNGはPCMマッピング形式ではありません (magic mismatch)'); return; }
-  const sr = bytesToUint32LE(bytes[4],bytes[5],bytes[6],bytes[7]);
-  const ch = bytes[8];
-  const bits = bytes[9];
-  const sampleCount = bytesToUint32LE(bytes[10],bytes[11],bytes[12],bytes[13]);
-  log('meta', {sr, ch, bits, sampleCount});
-  const pcmBytes = bytes.slice(16, 16 + sampleCount * (bits/8) * ch);
-  // convert to float channels
-  const channelsFloat = [];
-  for(let c=0;c<ch;c++) channelsFloat.push(new Float32Array(sampleCount));
-  let p=0;
-  for(let i=0;i<sampleCount;i++){
-    for(let c=0;c<ch;c++){
-      const lo = pcmBytes[p++]; const hi = pcmBytes[p++];
-      const val = (hi<<8) | lo;
-      const s = (val & 0x8000) ? val - 0x10000 : val;
-      channelsFloat[c][i] = s / 32767;
+async function pcmDecode(file){
+    if(!file) throw "画像ファイルを選択してください";
+    const img = await new Promise((res,rej)=>{
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = rej;
+        i.src = URL.createObjectURL(file);
+    });
+    const canvas = makeCanvas(img.width, img.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const u8 = new Uint8Array(ctx.getImageData(0,0,img.width,img.height).data.buffer);
+
+    if(String.fromCharCode(...u8.slice(0,4)) !== 'AUDM') throw "不正なPCM画像形式です";
+    const sr = bytesToUint32LE(u8, 4);
+    const ch = u8[8];
+    const len = bytesToUint32LE(u8, 10);
+
+    const channels = Array.from({length: ch}, () => new Float32Array(len));
+    let off = 16;
+    for(let i=0; i<len; i++){
+        for(let c=0; c<ch; c++){
+            let v = u8[off] | (u8[off+1] << 8);
+            if(v & 0x8000) v -= 0x10000;
+            channels[c][i] = v / 32768;
+            off += 2;
+        }
     }
-  }
-  const wavBuf = makeWavFromFloat32(channelsFloat, sr);
-  const blob = new Blob([wavBuf], {type:'audio/wav'});
-  downloadBlob(blob, 'pcm_restored.wav');
-  // for playback
-  const audioEl = document.getElementById('audioPlay');
-  audioEl.src = URL.createObjectURL(blob);
-  log('PCMからWAVを復元しダウンロードしました: pcm_restored.wav');
+    const wav = makeWavFromFloat32(channels, sr);
+    const blob = new Blob([wav], {type:'audio/wav'});
+    document.getElementById('audioPlay').src = URL.createObjectURL(blob);
+    downloadBlob(blob, 'restored_pcm.wav');
+    log("復元完了");
 }
 
-/* ---- ステガノグラフィ LSB ----
-   埋め込みプロトコル:
-   - 先頭32ビット: payload length (bytes) little-endian
-   - 次に payload bytes
-   LSB mapping: R LSB, G LSB, B LSB を順に使用（Aは変更しない）
-*/
-async function stegEncode(wavFile, coverImageFile){
-  if(!wavFile || !coverImageFile){ log('WAVとカバー画像の両方を選択してください'); return; }
-  log('ステガノ埋め込み開始...');
-  const wavAB = await readFileAsArrayBuffer(wavFile);
-  const wavBytes = new Uint8Array(wavAB);
-  const coverDataURL = await readFileAsDataURL(coverImageFile);
-  const img = new Image();
-  await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src=coverDataURL; });
-  const canvas = makeCanvas(img.width, img.height);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img,0,0);
-  const imgd = ctx.getImageData(0,0,canvas.width, canvas.height);
-  const pixels = imgd.data; // Uint8ClampedArray
-  const capacityBits = canvas.width * canvas.height * 3; // R,G,B LSBs
-  const requiredBits = (4 + wavBytes.length) * 8;
-  if(requiredBits > capacityBits){ log('カバー画像の容量不足: 必要bits=', requiredBits, 'capacity=', capacityBits); return; }
-  // build payload: first 4 bytes = length LE
-  const payload = new Uint8Array(4 + wavBytes.length);
-  payload.set(uint32ToBytesLE(wavBytes.length), 0);
-  payload.set(wavBytes, 4);
-  // embed
-  let bitIdx = 0;
-  for(let i=0;i<pixels.length && bitIdx < payload.length*8;i+=4){ // step by pixel
-    for(let c=0;c<3 && bitIdx < payload.length*8;c++){
-      const byteIndex = Math.floor(bitIdx/8);
-      const bitInByte = bitIdx%8;
-      const bit = (payload[byteIndex] >> bitInByte) & 1;
-      // set LSB of channel c
-      pixels[i + c] = (pixels[i + c] & 0xFE) | bit;
-      bitIdx++;
+/* ---- Steganography (LSB) ---- */
+async function stegEncode(wavFile, imgFile){
+    if(!wavFile || !imgFile) throw "WAVと画像の両方が必要です";
+    const wavBytes = new Uint8Array(await readFileAsArrayBuffer(wavFile));
+    const img = await new Promise((res,rej)=>{
+        const i = new Image(); i.onload = () => res(i); i.src = URL.createObjectURL(imgFile);
+    });
+    const canvas = makeCanvas(img.width, img.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img,0,0);
+    const imgd = ctx.getImageData(0,0,img.width,img.height);
+    const data = imgd.data;
+
+    const payload = new Uint8Array(4 + wavBytes.length);
+    payload.set(uint32ToBytesLE(wavBytes.length), 0);
+    payload.set(wavBytes, 4);
+
+    if(payload.length * 8 > (data.length / 4) * 3) throw "画像容量が足りません";
+
+    let bytePtr = 0, bitPtr = 0;
+    for(let i=0; i<data.length && bytePtr < payload.length; i++){
+        if(i % 4 === 3) continue; // Skip Alpha
+        const bit = (payload[bytePtr] >> bitPtr) & 1;
+        data[i] = (data[i] & 0xFE) | bit;
+        bitPtr++;
+        if(bitPtr === 8){ bitPtr = 0; bytePtr++; }
     }
-  }
-  ctx.putImageData(imgd,0,0);
-  const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
-  downloadBlob(blob, 'steg_embedded.png');
-  log('ステガノ画像を生成しました: steg_embedded.png');
+    ctx.putImageData(imgd,0,0);
+    canvas.toBlob(b => downloadBlob(b, 'stego_hidden.png'), 'image/png');
+    log("埋め込み完了");
 }
 
-async function stegDecode(stegoImageFile){
-  if(!stegoImageFile){ log('ステガノ化画像を選択してください'); return; }
-  log('ステガノ抽出開始...');
-  const dataURL = await readFileAsDataURL(stegoImageFile);
-  const img = new Image();
-  await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src=dataURL; });
-  const canvas = makeCanvas(img.width, img.height);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img,0,0);
-  const imgd = ctx.getImageData(0,0,canvas.width, canvas.height);
-  const pixels = imgd.data;
-  // read first 32 bits => length
-  let bits = [];
-  for(let i=0;i<pixels.length && bits.length < 32;i+=4){
-    for(let c=0;c<3 && bits.length < 32;c++){
-      bits.push(pixels[i + c] & 1);
-    }
-  }
-  if(bits.length < 32){ log('画像に埋め込まれたデータが見つかりません'); return; }
-  let len = 0;
-  for(let i=0;i<32;i++){ len |= bits[i] << i; }
-  log('埋め込みバイト長:', len);
-  const totalBits = (4 + len) * 8;
-  bits = [];
-  for(let i=0;i<pixels.length && bits.length < totalBits;i+=4){
-    for(let c=0;c<3 && bits.length < totalBits;c++){
-      bits.push(pixels[i + c] & 1);
-    }
-  }
-  if(bits.length < totalBits){ log('データが途中で終わっています'); return; }
-  const payload = new Uint8Array(4 + len);
-  for(let b=0;b<payload.length;b++){
-    let val = 0;
-    for(let bit=0;bit<8;bit++){
-      const bitVal = bits[b*8 + bit];
-      val |= (bitVal << bit);
-    }
-    payload[b] = val;
-  }
-  const wavBytes = payload.slice(4);
-  const blob = new Blob([wavBytes], {type:'audio/wav'});
-  downloadBlob(blob, 'steg_extracted.wav');
-  const audioEl = document.getElementById('audioPlay');
-  audioEl.src = URL.createObjectURL(blob);
-  log('ステガノからWAVを復元しました: steg_extracted.wav');
+async function stegDecode(imgFile){
+    if(!imgFile) throw "画像を選択してください";
+    const img = await new Promise((res,rej)=>{
+        const i = new Image(); i.onload = () => res(i); i.src = URL.createObjectURL(imgFile);
+    });
+    const canvas = makeCanvas(img.width, img.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img,0,0);
+    const data = ctx.getImageData(0,0,img.width,img.height).data;
+
+    const getByte = (startBit) => {
+        let b = 0;
+        for(let j=0; j<8; j++){
+            const totalBitIdx = startBit + j;
+            const pixelIdx = Math.floor(totalBitIdx / 3);
+            const channelIdx = totalBitIdx % 3;
+            const val = data[pixelIdx * 4 + channelIdx] & 1;
+            b |= (val << j);
+        }
+        return b;
+    };
+
+    const len = getByte(0) | (getByte(8)<<8) | (getByte(16)<<16) | (getByte(24)<<24);
+    if(len <= 0 || len > 100 * 1024 * 1024) throw "有効なデータが見つかりません";
+
+    const wav = new Uint8Array(len);
+    for(let i=0; i<len; i++) wav[i] = getByte((i + 4) * 8);
+
+    const blob = new Blob([wav], {type:'audio/wav'});
+    document.getElementById('audioPlay').src = URL.createObjectURL(blob);
+    downloadBlob(blob, 'extracted_stego.wav');
+    log("抽出完了");
 }
 
-/* ---- PNG コンテナ（カスタムチャンク） ----
-   PNG形式： ヘッダ(8) | chunk... ; insert custom chunk type 'aUdW' before IEND
-   chunk layout: length(4) | type(4 ASCII) | data(length) | CRC(4)
-*/
-async function containerEncode(wavFile, pngCoverFile){
-  if(!wavFile || !pngCoverFile){ log('WAV と PNG カバー画像を選択してください'); return; }
-  log('PNGコンテナ挿入開始...');
-  const wavAB = await readFileAsArrayBuffer(wavFile);
-  const pngAB = await readFileAsArrayBuffer(pngCoverFile);
-  const png = new Uint8Array(pngAB);
-  // verify PNG signature
-  const PNG_SIG = [137,80,78,71,13,10,26,10];
-  for(let i=0;i<8;i++){ if(png[i] !== PNG_SIG[i]){ log('カバーはPNGではありません'); return; } }
-  // parse chunks: find IEND offset
-  let offset = 8;
-  let iendIndex = -1;
-  while(offset < png.length){
-    const len = bytesToUint32LE(png[offset],png[offset+1],png[offset+2],png[offset+3]);
-    const type = String.fromCharCode(png[offset+4],png[offset+5],png[offset+6],png[offset+7]);
-    if(type === 'IEND'){ iendIndex = offset; break; }
-    offset += 8 + len + 4; // length + type + data + crc
-  }
-  if(iendIndex < 0){ log('IENDが見つかりません'); return; }
-  // create custom chunk
-  const chunkType = new TextEncoder().encode('aUdW'); // ancillary chunk
-  const data = new Uint8Array(wavAB);
-  const lenBytes = uint32ToBytesLE(data.length);
-  const chunkHeader = new Uint8Array(4 + 4 + data.length + 4);
-  chunkHeader.set(uint32ToBytesLE(data.length), 0);
-  chunkHeader.set(chunkType, 4);
-  chunkHeader.set(data, 8);
-  // compute CRC on type+data
-  const typeAndData = new Uint8Array(4 + data.length);
-  typeAndData.set(chunkType, 0);
-  typeAndData.set(data, 4);
-  const crc = crc32(typeAndData);
-  chunkHeader.set(uint32ToBytesLE(crc), 8 + data.length);
-  // new PNG = head(0..iendIndex-1) + newChunk + rest(iendIndex .. end)
-  const before = png.slice(0, iendIndex);
-  const rest = png.slice(iendIndex);
-  const out = new Uint8Array(before.length + chunkHeader.length + rest.length);
-  out.set(before, 0);
-  out.set(chunkHeader, before.length);
-  out.set(rest, before.length + chunkHeader.length);
-  const blob = new Blob([out], {type:'image/png'});
-  downloadBlob(blob, 'container_with_wav.png');
-  log('PNGにカスタムチャンクを挿入しました: container_with_wav.png');
+/* ---- PNG Container (Chunks) ---- */
+const CRC32_TABLE = new Uint32Array(256);
+for(let n=0;n<256;n++){
+    let c = n;
+    for(let k=0;k<8;k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    CRC32_TABLE[n] = c;
+}
+function crc32(buf){
+    let crc = 0xffffffff;
+    for(let i=0;i<buf.length;i++) crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ buf[i]) & 0xff];
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+async function containerEncode(wavFile, pngFile){
+    if(!wavFile || !pngFile) throw "ファイルが足りません";
+    const wav = new Uint8Array(await readFileAsArrayBuffer(wavFile));
+    const png = new Uint8Array(await readFileAsArrayBuffer(pngFile));
+    
+    // Find IEND
+    let iendPos = -1;
+    for(let i=png.length-12; i>=8; i--){
+        if(String.fromCharCode(...png.slice(i, i+4)) === 'IEND'){ iendPos = i; break; }
+    }
+    if(iendPos === -1) throw "IENDチャンクが見つかりません";
+
+    const type = new TextEncoder().encode('aUdW');
+    const chunk = new Uint8Array(12 + wav.length);
+    const dv = new DataView(chunk.buffer);
+    dv.setUint32(0, wav.length); // length
+    chunk.set(type, 4);
+    chunk.set(wav, 8);
+    const crcVal = crc32(chunk.slice(4, 8 + wav.length));
+    dv.setUint32(8 + wav.length, crcVal);
+
+    const out = new Uint8Array(png.length + chunk.length);
+    out.set(png.slice(0, iendPos));
+    out.set(chunk, iendPos);
+    out.set(png.slice(iendPos));
+
+    downloadBlob(new Blob([out], {type:'image/png'}), 'container.png');
+    log("チャンク挿入完了");
 }
 
 async function containerDecode(pngFile){
-  if(!pngFile){ log('PNGファイルを選択してください'); return; }
-  log('PNGコンテナ抽出開始...');
-  const pngAB = await readFileAsArrayBuffer(pngFile);
-  const png = new Uint8Array(pngAB);
-  const PNG_SIG = [137,80,78,71,13,10,26,10];
-  for(let i=0;i<8;i++){ if(png[i] !== PNG_SIG[i]){ log('これはPNGではありません'); return; } }
-  let offset = 8;
-  let found = false;
-  let extracted = null;
-  while(offset < png.length){
-    const len = bytesToUint32LE(png[offset],png[offset+1],png[offset+2],png[offset+3]);
-    const type = String.fromCharCode(png[offset+4],png[offset+5],png[offset+6],png[offset+7]);
-    if(type === 'aUdW'){
-      found = true;
-      extracted = png.slice(offset+8, offset+8+len);
-      break;
+    if(!pngFile) throw "画像が必要です";
+    const png = new Uint8Array(await readFileAsArrayBuffer(pngFile));
+    let p = 8;
+    while(p < png.length){
+        const len = (png[p]<<24)|(png[p+1]<<16)|(png[p+2]<<8)|png[p+3];
+        const type = String.fromCharCode(...png.slice(p+4, p+8));
+        if(type === 'aUdW'){
+            const data = png.slice(p+8, p+8+len);
+            const blob = new Blob([data], {type:'audio/wav'});
+            document.getElementById('audioPlay').src = URL.createObjectURL(blob);
+            downloadBlob(blob, 'extracted_chunk.wav');
+            log("チャンク抽出成功");
+            return;
+        }
+        p += 12 + len;
     }
-    offset += 8 + len + 4;
-  }
-  if(!found){ log('カスタムチャンク aUdW は見つかりませんでした'); return; }
-  const blob = new Blob([extracted], {type:'audio/wav'});
-  downloadBlob(blob, 'container_extracted.wav');
-  const audioEl = document.getElementById('audioPlay');
-  audioEl.src = URL.createObjectURL(blob);
-  log('PNGからWAVを抽出しました: container_extracted.wav');
+    throw "カスタムチャンクが見つかりません";
 }
 
-/* ---- スペクトログラム（STFT / ISTFT） ----
-   実装:
-   - FFT 実装（Cooley-Tukey, radix-2）
-   - windowing Hann
-   - 各フレームの complex (real, imag) を float32 として2枚のPNGに保存:
-       magImage.png: real parts packed as float32 per pixel
-       phaseImage.png (実際は imag): imag parts packed
-     具体的には、画像幅 = frameCount, 高さ = fftSize/2 + 1, 各ピクセル RGBA = float32 bytes (little endian)
-   - 復元時: 2画像を読み取り、各binの complex を復元 -> iFFT -> overlap-add
-*/
-function hannWindow(N){
-  const w = new Float32Array(N);
-  for(let n=0;n<N;n++) w[n] = 0.5 * (1 - Math.cos(2*Math.PI*n/(N-1)));
-  return w;
+/* ---- Spectrogram (Simple STFT) ---- */
+function fft(re, im){
+    const n = re.length;
+    for(let i=1, j=0; i<n; i++){
+        let bit = n >> 1;
+        for(; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if(i < j) [re[i], re[j]] = [re[j], re[i]], [im[i], im[j]] = [im[j], im[i]];
+    }
+    for(let len=2; len<=n; len<<=1){
+        let ang = 2 * Math.PI / len;
+        let wlen_re = Math.cos(ang), wlen_im = -Math.sin(ang);
+        for(let i=0; i<n; i+=len){
+            let w_re = 1, w_im = 0;
+            for(let j=0; j<len/2; j++){
+                let u_re = re[i+j], u_im = im[i+j];
+                let v_re = re[i+j+len/2] * w_re - im[i+j+len/2] * w_im;
+                let v_im = re[i+j+len/2] * w_im + im[i+j+len/2] * w_re;
+                re[i+j] = u_re + v_re; im[i+j] = u_im + v_im;
+                re[i+j+len/2] = u_re - v_re; im[i+j+len/2] = u_im - v_im;
+                let tmp = w_re * wlen_re - w_im * wlen_im;
+                w_im = w_re * wlen_im + w_im * wlen_re; w_re = tmp;
+            }
+        }
+    }
 }
 
-/* FFT: in-place radix-2 Cooley-Tukey
-   arrays: real[], imag[] length = N (power of two)
-*/
-function fft(real, imag){
-  const N = real.length;
-  // bit-reverse
-  let j = 0;
-  for(let i=1;i<N-1;i++){
-    let bit = N >> 1;
-    for(; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if(i < j){
-      [real[i], real[j]] = [real[j], real[i]];
-      [imag[i], imag[j]] = [imag[j], imag[i]];
+async function specEncode(file, winSize, hop){
+    if(!file) throw "音声が必要です";
+    log("スペクトログラム変換中...");
+    const audioBuf = await decodeAudio(await readFileAsArrayBuffer(file));
+    const data = audioBuf.getChannelData(0); // Mono
+    const frames = Math.floor((data.length - winSize) / hop) + 1;
+    const bins = winSize / 2 + 1;
+
+    const canvasR = makeCanvas(frames, bins), canvasI = makeCanvas(frames, bins);
+    const ctxR = canvasR.getContext('2d'), ctxI = canvasI.getContext('2d');
+    const imgR = ctxR.createImageData(frames, bins), imgI = ctxI.createImageData(frames, bins);
+    const viewR = new DataView(imgR.data.buffer), viewI = new DataView(imgI.data.buffer);
+
+    for(let f=0; f<frames; f++){
+        const re = new Float32Array(winSize), im = new Float32Array(winSize);
+        for(let i=0; i<winSize; i++) re[i] = data[f*hop + i] * (0.54 - 0.46 * Math.cos(2*Math.PI*i/(winSize-1)));
+        fft(re, im);
+        for(let b=0; b<bins; b++){
+            const idx = (b * frames + f) * 4;
+            viewR.setFloat32(idx, re[b], true);
+            viewI.setFloat32(idx, im[b], true);
+        }
     }
-  }
-  for(let len=2; len<=N; len<<=1){
-    const ang = -2 * Math.PI / len;
-    const wlen_r = Math.cos(ang);
-    const wlen_i = Math.sin(ang);
-    for(let i=0;i<N;i+=len){
-      let wr = 1, wi = 0;
-      for(let j=0;j<len/2;j++){
-        const u_r = real[i+j], u_i = imag[i+j];
-        const v_r = real[i+j+len/2] * wr - imag[i+j+len/2] * wi;
-        const v_i = real[i+j+len/2] * wi + imag[i+j+len/2] * wr;
-        real[i+j] = u_r + v_r;
-        imag[i+j] = u_i + v_i;
-        real[i+j+len/2] = u_r - v_r;
-        imag[i+j+len/2] = u_i - v_i;
-        const tmp_wr = wr * wlen_r - wi * wlen_i;
-        wi = wr * wlen_i + wi * wlen_r;
-        wr = tmp_wr;
-      }
-    }
-  }
-}
-function ifft(real, imag){
-  // conjugate, fft, conjugate, scale
-  for(let i=0;i<real.length;i++) imag[i] = -imag[i];
-  fft(real, imag);
-  for(let i=0;i<real.length;i++){
-    imag[i] = -imag[i];
-    real[i] /= real.length;
-    imag[i] /= real.length;
-  }
+    ctxR.putImageData(imgR,0,0); ctxI.putImageData(imgI,0,0);
+    canvasR.toBlob(b => downloadBlob(b, 'spec_real.png'), 'image/png');
+    canvasI.toBlob(b => downloadBlob(b, 'spec_imag.png'), 'image/png');
+    const meta = {sr: audioBuf.sampleRate, winSize, hop, frames, bins, len: data.length};
+    downloadBlob(new Blob([JSON.stringify(meta)], {type:'application/json'}), 'spec_meta.json');
+    log("スペクトログラム画像とメタデータを生成しました");
 }
 
-/* STFT and ISTFT routines */
-function stftFloat32(signal, windowSize, hop){
-  const win = hannWindow(windowSize);
-  const N = windowSize;
-  const frames = Math.floor((signal.length - N) / hop) + 1;
-  const half = N/2 + 1;
-  const realFrames = [];
-  const imagFrames = [];
-  const workR = new Float32Array(N);
-  const workI = new Float32Array(N);
-  for(let f=0; f<frames; f++){
-    const off = f*hop;
-    for(let n=0;n<N;n++){
-      workR[n] = (signal[off+n] || 0) * win[n];
-      workI[n] = 0;
+async function specDecode(files){
+    let fR, fI, fM;
+    for(const f of files){
+        if(f.name.includes('real')) fR = f;
+        else if(f.name.includes('imag')) fI = f;
+        else if(f.name.includes('meta')) fM = f;
     }
-    fft(workR, workI);
-    // store first N/2+1 bins
-    const rframe = new Float32Array(half);
-    const iframe = new Float32Array(half);
-    for(let k=0;k<half;k++){
-      rframe[k] = workR[k];
-      iframe[k] = workI[k];
+    if(!fR || !fI) throw "real.png と imag.png の両方を選択してください";
+    
+    const meta = fM ? JSON.parse(await fM.text()) : {sr:44100, winSize:1024, hop:256}; 
+    const loadImg = (f) => new Promise(res=>{const i=new Image(); i.onload=()=>res(i); i.src=URL.createObjectURL(f);});
+    const imgR = await loadImg(fR), imgI = await loadImg(fI);
+    
+    const frames = imgR.width, bins = imgR.height;
+    const canvasR = makeCanvas(frames, bins), canvasI = makeCanvas(frames, bins);
+    const ctxR = canvasR.getContext('2d'), ctxI = canvasI.getContext('2d');
+    ctxR.drawImage(imgR,0,0); ctxI.drawImage(imgI,0,0);
+    const datR = ctxR.getImageData(0,0,frames,bins).data, datI = ctxI.getImageData(0,0,frames,bins).data;
+    const viewR = new DataView(datR.buffer), viewI = new DataView(datI.buffer);
+
+    const out = new Float32Array(meta.len || frames * meta.hop + meta.winSize);
+    for(let f=0; f<frames; f++){
+        const re = new Float32Array(meta.winSize), im = new Float32Array(meta.winSize);
+        for(let b=0; b<bins; b++){
+            const idx = (b * frames + f) * 4;
+            re[b] = viewR.getFloat32(idx, true);
+            im[b] = viewI.getFloat32(idx, true);
+            if(b > 0 && b < bins - 1){ re[meta.winSize-b] = re[b]; im[meta.winSize-b] = -im[b]; }
+        }
+        // Inverse FFT (using same function with conjugate)
+        for(let i=0; i<im.length; i++) im[i] = -im[i];
+        fft(re, im);
+        for(let i=0; i<re.length; i++){
+            const val = (re[i] / meta.winSize);
+            const pos = f * meta.hop + i;
+            if(pos < out.length) out[pos] += val;
+        }
     }
-    realFrames.push(rframe);
-    imagFrames.push(iframe);
-  }
-  return {realFrames, imagFrames, frames, half, N};
+    const wav = makeWavFromFloat32([out], meta.sr);
+    document.getElementById('audioPlay').src = URL.createObjectURL(new Blob([wav], {type:'audio/wav'}));
+    downloadBlob(new Blob([wav], {type:'audio/wav'}), 'restored_spec.wav');
+    log("スペクトログラム復元完了");
 }
 
-function istftFloat32(realFrames, imagFrames, windowSize, hop, outLength){
-  const N = windowSize;
-  const frames = realFrames.length;
-  const win = hannWindow(N);
-  const out = new Float32Array(outLength || (frames*hop + N));
-  const workR = new Float32Array(N);
-  const workI = new Float32Array(N);
-  for(let f=0; f<frames; f++){
-    // reconstruct full spectrum from half (mirror)
-    for(let k=0;k<N;k++){ workR[k]=0; workI[k]=0; }
-    const half = realFrames[f].length;
-    for(let k=0;k<half;k++){
-      workR[k] = realFrames[f][k];
-      workI[k] = imagFrames[f][k];
-      if(k>0 && k < half-1){
-        workR[N-k] = realFrames[f][k];
-        workI[N-k] = -imagFrames[f][k];
-      }
-    }
-    // inverse
-    ifft(workR, workI);
-    const off = f*hop;
-    for(let n=0;n<N;n++){
-      out[off+n] += workR[n] * win[n];
-    }
-  }
-  return out;
-}
-
-/* pack frames (realFrames, imagFrames) into two PNGs (float32 per pixel) */
-async function specEncode(file, windowSize, hop, canvasWidth){
-  if(!file){ log('WAVファイルを選択してください'); return; }
-  log('スペクトログラム生成開始...');
-  const ab = await readFileAsArrayBuffer(file);
-  const audioBuf = await decodeAudioBufferFromArrayBuffer(ab);
-  // mix to mono (平均)
-  const ch = audioBuf.numberOfChannels;
-  const len = audioBuf.length;
-  const mono = new Float32Array(len);
-  for(let i=0;i<len;i++){
-    let s=0; for(let c=0;c<ch;c++) s += audioBuf.getChannelData(c)[i]; mono[i] = s / ch;
-  }
-  const spec = stftFloat32(mono, windowSize, hop);
-  const frames = spec.frames;
-  const half = spec.half;
-  log('frames=', frames, 'bins=', half);
-  // make two canvases: width = frames, height = half
-  const width = Math.max(1, canvasWidth ? canvasWidth : frames);
-  const actualWidth = frames;
-  const height = half;
-  // We'll store each float32 in one pixel (RGBA little-endian)
-  // So canvas width = frames, height = half.
-  const canvasR = makeCanvas(actualWidth, height);
-  const ctxR = canvasR.getContext('2d');
-  const imgR = ctxR.createImageData(actualWidth, height);
-  const dataR = imgR.data;
-  const canvasI = makeCanvas(actualWidth, height);
-  const ctxI = canvasI.getContext('2d');
-  const imgI = ctxI.createImageData(actualWidth, height);
-  const dataI = imgI.data;
-  // fill
-  for(let x=0;x<frames;x++){
-    for(let y=0;y<height;y++){
-      const r = spec.realFrames[x][y];
-      const im = spec.imagFrames[x][y];
-      const rb = float32ToRgbaBytes(r);
-      const ib = float32ToRgbaBytes(im);
-      const idx = (y*actualWidth + x) * 4;
-      dataR[idx] = rb[0]; dataR[idx+1] = rb[1]; dataR[idx+2] = rb[2]; dataR[idx+3] = rb[3];
-      dataI[idx] = ib[0]; dataI[idx+1] = ib[1]; dataI[idx+2] = ib[2]; dataI[idx+3] = ib[3];
-    }
-  }
-  ctxR.putImageData(imgR, 0, 0);
-  ctxI.putImageData(imgI, 0, 0);
-  // download both images and also metadata JSON blob (sampleRate, windowSize, hop, frames, half)
-  const blobR = await new Promise(r=>canvasR.toBlob(r, 'image/png'));
-  const blobI = await new Promise(r=>canvasI.toBlob(r, 'image/png'));
-  const meta = { sampleRate: audioBuf.sampleRate, windowSize, hop, frames, half, sourceChannels: ch, originalLength: len };
-  const metaBlob = new Blob([JSON.stringify(meta)], {type:'application/json'});
-  downloadBlob(blobR, 'spec_real.png');
-  downloadBlob(blobI, 'spec_imag.png');
-  downloadBlob(metaBlob, 'spec_meta.json');
-  log('スペクトログラム（real/imag）を出力しました。real: spec_real.png, imag: spec_imag.png, meta: spec_meta.json');
-}
-
-async function specDecode(realImageFile, imagImageFile, metaFile){
-  if(!realImageFile || !imagImageFile || !metaFile){ log('real画像, imag画像, meta.json を選択してください'); return; }
-  log('スペクトログラム復元開始...');
-  const realURL = await readFileAsDataURL(realImageFile);
-  const imagURL = await readFileAsDataURL(imagImageFile);
-  const metaText = await (new Response(await readFileAsArrayBuffer(metaFile))).text();
-  const meta = JSON.parse(metaText);
-  const imgR = new Image(), imgI = new Image();
-  await new Promise((res,rej)=>{ let c=0; imgR.onload=()=>{ if(++c===2) res(); }; imgI.onload=()=>{ if(++c===2) res(); }; imgR.onerror=imgI.onerror=rej; imgR.src=realURL; imgI.src=imagURL; });
-  // read image datas
-  const canvasR = makeCanvas(imgR.width, imgR.height); const ctxR = canvasR.getContext('2d'); ctxR.drawImage(imgR,0,0); const imgdR = ctxR.getImageData(0,0,canvasR.width, canvasR.height);
-  const canvasI = makeCanvas(imgI.width, imgI.height); const ctxI = canvasI.getContext('2d'); ctxI.drawImage(imgI,0,0); const imgdI = ctxI.getImageData(0,0,canvasI.width, canvasI.height);
-  const frames = meta.frames;
-  const half = meta.half;
-  // reconstruct realFrames and imagFrames arrays of Float32Array[half]
-  const realFrames = []; const imagFrames = [];
-  for(let x=0;x<frames;x++){
-    const rf = new Float32Array(half); const imf = new Float32Array(half);
-    for(let y=0;y<half;y++){
-      const idx = (y*canvasR.width + x) * 4;
-      const r = rgbaBytesToFloat32(imgdR.data[idx], imgdR.data[idx+1], imgdR.data[idx+2], imgdR.data[idx+3]);
-      const im = rgbaBytesToFloat32(imgdI.data[idx], imgdI.data[idx+1], imgdI.data[idx+2], imgdI.data[idx+3]);
-      rf[y] = r; imf[y] = im;
-    }
-    realFrames.push(rf);
-    imagFrames.push(imf);
-  }
-  // ISTFT
-  const outLen = meta.originalLength || (frames * meta.hop + meta.windowSize);
-  const out = istftFloat32(realFrames, imagFrames, meta.windowSize, meta.hop, outLen);
-  // normalize if necessary
-  let maxVal = 0; for(let i=0;i<out.length;i++) maxVal = Math.max(maxVal, Math.abs(out[i]));
-  if(maxVal > 1) for(let i=0;i<out.length;i++) out[i] /= maxVal;
-  // create WAV (mono)
-  const wavBuf = makeWavFromFloat32([out], meta.sampleRate);
-  const blob = new Blob([wavBuf], {type:'audio/wav'});
-  downloadBlob(blob, 'spec_restored.wav');
-  const audioEl = document.getElementById('audioPlay');
-  audioEl.src = URL.createObjectURL(blob);
-  log('スペクトログラムからWAVを復元しました: spec_restored.wav');
-}
-
-/* ---- UI イベントバインディング ---- */
-
-document.getElementById('pcmEncode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const f = document.getElementById('wavInput').files[0];
-  const w = parseInt(document.getElementById('canvasWidth').value) || 1024;
-  try{ await pcmEncode(f, w); } catch(e){ log('エラー:', e); console.error(e); }
+/* ---- Event Bindings ---- */
+const handle = (id, fn) => document.getElementById(id).addEventListener('click', async () => {
+    clearLog();
+    try { await fn(); } catch(e) { log("エラー:", e); }
 });
-document.getElementById('pcmDecode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const f = document.getElementById('imageInput').files[0];
-  try{ await pcmDecode(f); } catch(e){ log('エラー:', e); console.error(e); }
-});
-document.getElementById('stegEncode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const wav = document.getElementById('wavInput').files[0];
-  const img = document.getElementById('imageInput').files[0];
-  try{ await stegEncode(wav, img); } catch(e){ log('エラー:', e); console.error(e); }
-});
-document.getElementById('stegDecode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const img = document.getElementById('imageInput').files[0];
-  try{ await stegDecode(img); } catch(e){ log('エラー:', e); console.error(e); }
-});
-document.getElementById('containerEncode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const wav = document.getElementById('wavInput').files[0];
-  const img = document.getElementById('imageInput').files[0];
-  try{ await containerEncode(wav, img); } catch(e){ log('エラー:', e); console.error(e); }
-});
-document.getElementById('containerDecode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const img = document.getElementById('imageInput').files[0];
-  try{ await containerDecode(img); } catch(e){ log('エラー:', e); console.error(e); }
-});
-document.getElementById('specEncode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  const wav = document.getElementById('wavInput').files[0];
-  const w = parseInt(document.getElementById('specWindow').value) || 1024;
-  const hop = parseInt(document.getElementById('specHop').value) || 256;
-  const cw = parseInt(document.getElementById('canvasWidth').value) || 1024;
-  try{ await specEncode(wav, w, hop, cw); } catch(e){ log('エラー:', e); console.error(e); }
-});
-document.getElementById('specDecode').addEventListener('click', async ()=>{
-  logEl.textContent = '';
-  // user must select three files: real image, imag image, meta json.
-  // For simplicity, reuse file inputs: require selecting files in imageInput (first two) and wavInput for meta
-  const files = document.getElementById('imageInput').files;
-  const meta = document.getElementById('wavInput').files[0]; // prompt user to load meta JSON into wavInput
-  if(files.length < 2 || !meta){ log('real PNG, imag PNG を image file input に2つ選択し、meta JSON を audio input に選択してください'); return; }
-  try{ await specDecode(files[0], files[1], meta); } catch(e){ log('エラー:', e); console.error(e); }
+
+handle('pcmEncode', () => pcmEncode(document.getElementById('wavInput').files[0], parseInt(document.getElementById('canvasWidth').value)));
+handle('pcmDecode', () => pcmDecode(document.getElementById('imageInput').files[0]));
+handle('stegEncode', () => stegEncode(document.getElementById('wavInput').files[0], document.getElementById('imageInput').files[0]));
+handle('stegDecode', () => stegDecode(document.getElementById('imageInput').files[0]));
+handle('containerEncode', () => containerEncode(document.getElementById('wavInput').files[0], document.getElementById('imageInput').files[0]));
+handle('containerDecode', () => containerDecode(document.getElementById('imageInput').files[0]));
+handle('specEncode', () => specEncode(document.getElementById('wavInput').files[0], parseInt(document.getElementById('specWindow').value), parseInt(document.getElementById('specHop').value)));
+handle('specDecode', () => {
+    const files = Array.from(document.getElementById('imageInput').files).concat(Array.from(document.getElementById('wavInput').files));
+    return specDecode(files);
 });
 
 </script>
