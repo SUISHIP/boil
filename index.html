@@ -429,12 +429,17 @@
                         }
                     });
 
-                    // H.264 Main Profile Level 4.1 (互換性重視)
+                    const is4K = width * height > 1920 * 1080;
+                    
+                    const codec = is4K
+                        ? 'avc1.640033' // 5.1
+                        : 'avc1.4d0029'; // 4.1
+                    
                     videoEncoder.configure({
-                        codec: 'avc1.4d0029', 
-                        width: width,
-                        height: height,
-                        bitrate: 5_000_000, // 5Mbps
+                        codec,
+                        width,
+                        height,
+                        bitrate: is4K ? 16_000_000 : 5_000_000,
                         framerate: fps
                     });
 
