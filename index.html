@@ -81,20 +81,33 @@
             }
         `;
 
+        const DEFAULT_PARAMS = {
+            frameCount: 3,
+            jitterStrength: 2.0,
+            noiseScale: 0.05,
+            speedFps: 10,
+            removeWhiteBg: false,
+            whiteThreshold: 0.94,
+            seed: 123
+        };
+
         const App = () => {
             const [source, setSource] = useState(null);
-            const [params, setParams] = useState({
-                frameCount: 3,
-                jitterStrength: 2.0,
-                noiseScale: 0.05,
-                speedFps: 10,
-                removeWhiteBg: false,
-                whiteThreshold: 0.94,
-                seed: 123
-            });
+            const [params, setParams] = useState(DEFAULT_PARAMS);
             const [isPlaying, setIsPlaying] = useState(true);
             const [currentFrame, setCurrentFrame] = useState(0);
             const [isProcessing, setIsProcessing] = useState(false);
+
+            // プリセット用の状態
+            const [presets, setPresets] = useState(() => {
+                const saved = localStorage.getItem('lineBoilerPresets');
+                if (saved) {
+                    try { return JSON.parse(saved); } catch (e) { console.error(e); }
+                }
+                return [{ id: 'default', name: 'デフォルト', params: DEFAULT_PARAMS }];
+            });
+            const [selectedPresetId, setSelectedPresetId] = useState('default');
+            const [presetInputName, setPresetInputName] = useState('');
 
             const canvasRef = useRef(null);
             const glRef = useRef(null);
@@ -102,6 +115,44 @@
             const textureRef = useRef(null);
             const requestRef = useRef();
             const lastTimeRef = useRef(0);
+
+            // プリセットの保存とローカルストレージ更新
+            useEffect(() => {
+                try {
+                    localStorage.setItem('lineBoilerPresets', JSON.stringify(presets));
+                } catch (e) {
+                    console.warn('Failed to save presets to localStorage', e);
+                }
+            }, [presets]);
+
+            const updateParam = (key, value) => {
+                setParams(prev => ({ ...prev, [key]: value }));
+                setSelectedPresetId(''); // パラメータを変更したらカスタム状態にする
+            };
+
+            const handleSavePreset = () => {
+                const name = presetInputName.trim();
+                if (!name) return;
+                const newId = 'preset_' + Date.now();
+                const newPreset = { id: newId, name, params: { ...params } };
+                setPresets(prev => [...prev, newPreset]);
+                setSelectedPresetId(newId);
+                setPresetInputName('');
+            };
+
+            const handleSelectPreset = (id) => {
+                setSelectedPresetId(id);
+                if (id === '') return;
+                const preset = presets.find(p => p.id === id);
+                if (preset) setParams(preset.params);
+            };
+
+            const handleDeletePreset = () => {
+                if (!selectedPresetId || selectedPresetId === 'default') return;
+                setPresets(prev => prev.filter(p => p.id !== selectedPresetId));
+                setSelectedPresetId('default');
+                setParams(presets.find(p => p.id === 'default').params);
+            };
 
             const initGL = (canvas) => {
                 const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true, alpha: true });
@@ -238,8 +289,15 @@
                 try {
                     const response = await fetch(url);
                     const arrayBuffer = await response.arrayBuffer();
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-                    return await audioCtx.decodeAudioData(arrayBuffer);
+                    // オプションを指定せずにAudioContextを生成することで、ファイルの元のサンプリングレートを維持しやすくする
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                    
+                    // リソース解放
+                    if (audioCtx.state !== 'closed') {
+                        audioCtx.close();
+                    }
+                    return audioBuffer;
                 } catch (e) {
                     console.warn("Audio extraction failed:", e);
                     return null;
@@ -311,11 +369,15 @@
                             output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
                             error: (e) => console.error(e)
                         });
+                        
+                        // 取得したサンプリングレートを維持し、チャンネルあたり160kbps（ステレオなら320kbps）の高音質でエンコード
+                        const optimalBitrate = audioBuffer.numberOfChannels * 160_000;
+                        
                         audioEncoder.configure({
                             codec: 'mp4a.40.2',
                             numberOfChannels: audioBuffer.numberOfChannels,
-                            sampleRate: audioBuffer.sampleRate,
-                            bitrate: 128_000
+                            sampleRate: audioBuffer.sampleRate, 
+                            bitrate: optimalBitrate
                         });
                     }
 
@@ -384,7 +446,7 @@
                 <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
                     <header className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900 shadow-md">
                         <div className="flex items-center gap-3">
-                            <h1 className="text-xl font-black text-indigo-400 italic tracking-tighter">LINE BOILER v2.2</h1>
+                            <h1 className="text-xl font-black text-indigo-400 italic tracking-tighter">LINE BOILER v2.3</h1>
                             {source && (
                                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30">
                                     {source.width} x {source.height}
@@ -403,7 +465,47 @@
                             </div>
                         </div>
 
-                        <div className="bg-slate-900 p-6 rounded-2xl space-y-6 shadow-2xl border border-slate-800 overflow-y-auto">
+                        <div className="bg-slate-900 p-6 rounded-2xl space-y-6 shadow-2xl border border-slate-800 overflow-y-auto max-h-[calc(100vh-100px)]">
+                            
+                            {/* プリセット管理セクション */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 space-y-3">
+                                <div className="flex items-center justify-between mb-1">
+                                    <h3 className="font-bold text-slate-400 uppercase tracking-widest text-xs">Presets</h3>
+                                    {selectedPresetId !== 'default' && selectedPresetId !== '' && (
+                                        <button onClick={handleDeletePreset} className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-400/10 rounded transition-colors">
+                                            削除
+                                        </button>
+                                    )}
+                                </div>
+                                <select 
+                                    value={selectedPresetId}
+                                    onChange={(e) => handleSelectPreset(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-700 text-sm rounded-lg p-2 text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+                                >
+                                    <option value="">-- カスタム --</option>
+                                    {presets.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                </select>
+                                <div className="flex gap-2 pt-1">
+                                    <input 
+                                        type="text" 
+                                        placeholder="新しいプリセット名" 
+                                        value={presetInputName}
+                                        onChange={(e) => setPresetInputName(e.target.value)}
+                                        className="flex-1 bg-slate-950 border border-slate-700 text-sm rounded-lg p-2 text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                                    />
+                                    <button 
+                                        onClick={handleSavePreset} 
+                                        disabled={!presetInputName.trim()} 
+                                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition-colors shadow-lg"
+                                    >
+                                        保存
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* パラメータ操作セクション */}
                             <div>
                                 <h2 className="font-bold text-slate-400 uppercase tracking-widest text-xs mb-4 flex justify-between">
                                     <span>Parameters</span>
@@ -415,24 +517,24 @@
                                 <div className="space-y-5">
                                     <label className="block text-xs text-slate-300">揺らぎ (Jitter): {params.jitterStrength}px
                                         <input type="range" min="0" max="20" step="0.1" value={params.jitterStrength} 
-                                            onChange={e => setParams({...params, jitterStrength: parseFloat(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                            onChange={e => updateParam('jitterStrength', parseFloat(e.target.value))} className="w-full mt-2 accent-indigo-500" />
                                     </label>
                                     <label className="block text-xs text-slate-300">ノイズ細かさ: {params.noiseScale}
                                         <input type="range" min="0.001" max="0.2" step="0.001" value={params.noiseScale} 
-                                            onChange={e => setParams({...params, noiseScale: parseFloat(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                            onChange={e => updateParam('noiseScale', parseFloat(e.target.value))} className="w-full mt-2 accent-indigo-500" />
                                     </label>
                                     <label className="block text-xs text-slate-300">再生速度: {params.speedFps} FPS
                                         <input type="range" min="1" max="60" value={params.speedFps} 
-                                            onChange={e => setParams({...params, speedFps: parseInt(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                            onChange={e => updateParam('speedFps', parseInt(e.target.value))} className="w-full mt-2 accent-indigo-500" />
                                     </label>
                                     <label className="block text-xs text-slate-300">アニメ枚数: {params.frameCount}
                                         <input type="range" min="2" max="12" value={params.frameCount} 
-                                            onChange={e => setParams({...params, frameCount: parseInt(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                            onChange={e => updateParam('frameCount', parseInt(e.target.value))} className="w-full mt-2 accent-indigo-500" />
                                     </label>
 
                                     <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-xl border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors"
-                                         onClick={() => setParams({...params, removeWhiteBg: !params.removeWhiteBg})}>
-                                        <input type="checkbox" checked={params.removeWhiteBg} readOnly className="accent-indigo-500 h-4 w-4" />
+                                         onClick={() => updateParam('removeWhiteBg', !params.removeWhiteBg)}>
+                                        <input type="checkbox" checked={params.removeWhiteBg} readOnly className="accent-indigo-500 h-4 w-4 pointer-events-none" />
                                         <span className="text-xs text-slate-200">白背景を透過 (PNG/Video)</span>
                                     </div>
                                 </div>
@@ -452,7 +554,7 @@
                                 {source?.type === 'video' && (
                                     <div className="text-[10px] text-center px-2 py-1 rounded-md bg-slate-800/50 border border-slate-700/50">
                                         {source.audioBuffer ? 
-                                            <span className="text-emerald-400 font-bold">● 音声を保持して出力します</span> : 
+                                            <span className="text-emerald-400 font-bold">● 高音質で音声を保持します ({source.audioBuffer.sampleRate}Hz)</span> : 
                                             <span className="text-slate-500 animate-pulse">○ 音声データを抽出中...</span>
                                         }
                                     </div>
