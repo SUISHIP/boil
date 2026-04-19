@@ -238,7 +238,7 @@
                 try {
                     const response = await fetch(url);
                     const arrayBuffer = await response.arrayBuffer();
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
                     return await audioCtx.decodeAudioData(arrayBuffer);
                 } catch (e) {
                     console.warn("Audio extraction failed:", e);
@@ -315,7 +315,7 @@
                             codec: 'mp4a.40.2',
                             numberOfChannels: audioBuffer.numberOfChannels,
                             sampleRate: audioBuffer.sampleRate,
-                            bitrate: 128_000
+                            bitrate: 256_000
                         });
                     }
 
