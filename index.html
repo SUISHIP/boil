@@ -85,7 +85,8 @@
             frameCount: 3,
             jitterStrength: 2.0,
             noiseScale: 0.05,
-            speedFps: 10,
+            videoFps: 30, // 動画自体の滑らかさ（エクスポート時のFPS）
+            boilFps: 10,  // ボイルノイズが変化するFPS
             removeWhiteBg: false,
             whiteThreshold: 0.94,
             seed: 123
@@ -95,14 +96,28 @@
             const [source, setSource] = useState(null);
             const [params, setParams] = useState(DEFAULT_PARAMS);
             const [isPlaying, setIsPlaying] = useState(true);
-            const [currentFrame, setCurrentFrame] = useState(0);
             const [isProcessing, setIsProcessing] = useState(false);
 
             // プリセット用の状態
             const [presets, setPresets] = useState(() => {
                 const saved = localStorage.getItem('lineBoilerPresets');
                 if (saved) {
-                    try { return JSON.parse(saved); } catch (e) { console.error(e); }
+                    try { 
+                        let parsed = JSON.parse(saved); 
+                        // 旧バージョンのプリセットからのマイグレーション
+                        parsed = parsed.map(p => {
+                            if (p.params && p.params.speedFps !== undefined) {
+                                p.params.videoFps = 30;
+                                p.params.boilFps = p.params.speedFps;
+                                delete p.params.speedFps;
+                            }
+                            if (p.id === 'default') {
+                                p.params = { ...DEFAULT_PARAMS };
+                            }
+                            return p;
+                        });
+                        return parsed;
+                    } catch (e) { console.error(e); }
                 }
                 return [{ id: 'default', name: 'デフォルト', params: DEFAULT_PARAMS }];
             });
@@ -114,7 +129,11 @@
             const programRef = useRef(null);
             const textureRef = useRef(null);
             const requestRef = useRef();
-            const lastTimeRef = useRef(0);
+            
+            // アニメーション制御用のRef
+            const currentBoilFrameRef = useRef(0);
+            const lastVideoTimeRef = useRef(0);
+            const lastBoilTimeRef = useRef(0);
 
             // プリセットの保存とローカルストレージ更新
             useEffect(() => {
@@ -227,19 +246,33 @@
             useEffect(() => {
                 const animate = (time) => {
                     if (source && isPlaying) {
-                        const interval = 1000 / params.speedFps;
-                        if (time - lastTimeRef.current > interval) {
-                            const nextFrame = (currentFrame + 1) % params.frameCount;
-                            setCurrentFrame(nextFrame);
-                            renderFrame(nextFrame);
-                            lastTimeRef.current = time;
+                        const videoInterval = 1000 / params.videoFps;
+                        const boilInterval = 1000 / params.boilFps;
+
+                        let shouldRender = false;
+                        
+                        // 動画のFPS間隔に基づく更新判定
+                        if (time - lastVideoTimeRef.current >= videoInterval) {
+                            shouldRender = true;
+                            lastVideoTimeRef.current = time;
+                        }
+
+                        // ボイルノイズのFPS間隔に基づく更新判定
+                        if (time - lastBoilTimeRef.current >= boilInterval) {
+                            currentBoilFrameRef.current = (currentBoilFrameRef.current + 1) % params.frameCount;
+                            lastBoilTimeRef.current = time;
+                            shouldRender = true;
+                        }
+
+                        if (shouldRender) {
+                            renderFrame(currentBoilFrameRef.current);
                         }
                     }
                     requestRef.current = requestAnimationFrame(animate);
                 };
                 requestRef.current = requestAnimationFrame(animate);
                 return () => cancelAnimationFrame(requestRef.current);
-            }, [isPlaying, params.speedFps, params.frameCount, currentFrame, renderFrame, source]);
+            }, [isPlaying, params.videoFps, params.boilFps, params.frameCount, renderFrame, source]);
 
             const handleFileUpload = (e) => {
                 const file = e.target.files?.[0];
@@ -360,7 +393,7 @@
                         width: outW, 
                         height: outH, 
                         bitrate: 5_000_000, 
-                        framerate: params.speedFps 
+                        framerate: params.videoFps 
                     });
 
                     let audioEncoder = null;
@@ -382,16 +415,18 @@
                     }
 
                     const duration = source.type === 'video' ? source.duration : 3; // 画像の場合は3秒
-                    const totalFrames = Math.floor(duration * params.speedFps);
-                    const timePerFrame = 1000000 / params.speedFps;
+                    const totalFrames = Math.floor(duration * params.videoFps);
+                    const timePerFrame = 1000000 / params.videoFps;
 
                     for (let i = 0; i < totalFrames; i++) {
                         if (source.type === 'video') {
-                            source.element.currentTime = i / params.speedFps;
+                            source.element.currentTime = i / params.videoFps;
                             await new Promise(r => source.element.onseeked = r);
                         }
                         
-                        renderFrame(i % params.frameCount);
+                        // 現在の動画フレーム時間に合わせたボイルノイズのインデックスを計算
+                        const boilIdx = Math.floor((i / params.videoFps) * params.boilFps) % params.frameCount;
+                        renderFrame(boilIdx);
                         const timestamp = i * timePerFrame;
                         
                         const frame = new VideoFrame(canvasRef.current, { timestamp: timestamp });
@@ -399,8 +434,8 @@
                         frame.close();
 
                         if (audioEncoder && audioBuffer) {
-                            const startSample = Math.floor((i / params.speedFps) * audioBuffer.sampleRate);
-                            const endSample = Math.floor(((i + 1) / params.speedFps) * audioBuffer.sampleRate);
+                            const startSample = Math.floor((i / params.videoFps) * audioBuffer.sampleRate);
+                            const endSample = Math.floor(((i + 1) / params.videoFps) * audioBuffer.sampleRate);
                             const numSamples = endSample - startSample;
 
                             if (numSamples > 0) {
@@ -446,7 +481,7 @@
                 <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
                     <header className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900 shadow-md">
                         <div className="flex items-center gap-3">
-                            <h1 className="text-xl font-black text-indigo-400 italic tracking-tighter">LINE BOILER v2.3</h1>
+                            <h1 className="text-xl font-black text-indigo-400 italic tracking-tighter">LINE BOILER v2.4</h1>
                             {source && (
                                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30">
                                     {source.width} x {source.height}
@@ -523,9 +558,13 @@
                                         <input type="range" min="0.001" max="0.2" step="0.001" value={params.noiseScale} 
                                             onChange={e => updateParam('noiseScale', parseFloat(e.target.value))} className="w-full mt-2 accent-indigo-500" />
                                     </label>
-                                    <label className="block text-xs text-slate-300">再生速度: {params.speedFps} FPS
-                                        <input type="range" min="1" max="60" value={params.speedFps} 
-                                            onChange={e => updateParam('speedFps', parseInt(e.target.value))} className="w-full mt-2 accent-indigo-500" />
+                                    <label className="block text-xs text-slate-300">背景動画のFPS: {params.videoFps} FPS
+                                        <input type="range" min="1" max="60" value={params.videoFps} 
+                                            onChange={e => updateParam('videoFps', parseInt(e.target.value))} className="w-full mt-2 accent-indigo-500" />
+                                    </label>
+                                    <label className="block text-xs text-slate-300">ボイルノイズのFPS: {params.boilFps} FPS
+                                        <input type="range" min="1" max="60" value={params.boilFps} 
+                                            onChange={e => updateParam('boilFps', parseInt(e.target.value))} className="w-full mt-2 accent-indigo-500" />
                                     </label>
                                     <label className="block text-xs text-slate-300">アニメ枚数: {params.frameCount}
                                         <input type="range" min="2" max="12" value={params.frameCount} 
