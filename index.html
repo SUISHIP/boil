@@ -185,16 +185,38 @@
                 return () => cancelAnimationFrame(requestRef.current);
             }, [isPlaying, params.speedFps, params.frameCount, currentFrame, renderFrame, source]);
 
-            const handleFileUpload = (e) => {
+            const handleFileUpload = async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
                 const url = URL.createObjectURL(file);
+                
                 if (file.type.startsWith('video/')) {
                     const video = document.createElement('video');
                     video.src = url; video.muted = true; video.loop = true; video.play();
+                    
+                    // 音声データの取得準備
+                    let audioData = null;
+                    try {
+                        const response = await fetch(url);
+                        const arrayBuffer = await response.arrayBuffer();
+                        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                        audioData = await audioCtx.decodeAudioData(arrayBuffer);
+                    } catch (err) {
+                        console.warn("Could not extract audio:", err);
+                    }
+
                     video.onloadedmetadata = () => {
-                        setSource({ type: 'video', element: video, width: video.videoWidth, height: video.videoHeight, name: file.name });
-                        canvasRef.current.width = video.videoWidth; canvasRef.current.height = video.videoHeight;
+                        setSource({ 
+                            type: 'video', 
+                            element: video, 
+                            width: video.videoWidth, 
+                            height: video.videoHeight, 
+                            name: file.name,
+                            duration: video.duration,
+                            audioBuffer: audioData
+                        });
+                        canvasRef.current.width = video.videoWidth; 
+                        canvasRef.current.height = video.videoHeight;
                         if (!glRef.current) initGL(canvasRef.current);
                     };
                 } else {
@@ -214,7 +236,6 @@
                 return parts.length > 1 ? parts.slice(0, -1).join('.') : fileName;
             };
 
-            // ZIP エクスポート
             const handleExportZip = async () => {
                 if (!source || typeof window.JSZip === 'undefined') return;
                 setIsProcessing(true);
@@ -243,35 +264,101 @@
                 if (!source || typeof window.Mp4Muxer === 'undefined') return;
                 setIsProcessing(true);
                 try {
-                    const { width, height } = source;
+                    const { width, height, audioBuffer } = source;
                     const outW = width % 2 === 0 ? width : width - 1;
                     const outH = height % 2 === 0 ? height : height - 1;
-                    const muxer = new window.Mp4Muxer.Muxer({
+                    
+                    const muxerConfig = {
                         target: new window.Mp4Muxer.ArrayBufferTarget(),
                         video: { codec: 'avc', width: outW, height: outH },
                         fastStart: 'in-memory'
-                    });
+                    };
+
+                    // 音声がある場合はmuxerの設定に追加
+                    if (audioBuffer) {
+                        muxerConfig.audio = {
+                            codec: 'aac',
+                            sampleRate: audioBuffer.sampleRate,
+                            numberOfChannels: audioBuffer.numberOfChannels
+                        };
+                    }
+
+                    const muxer = new window.Mp4Muxer.Muxer(muxerConfig);
+
                     const videoEncoder = new VideoEncoder({
                         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
                         error: (e) => console.error(e)
                     });
-                    videoEncoder.configure({ codec: 'avc1.4d0029', width: outW, height: outH, bitrate: 5_000_000, framerate: params.speedFps });
-                    
-                    const duration = source.type === 'video' ? source.element.duration : 5;
+                    videoEncoder.configure({ 
+                        codec: 'avc1.4d0029', 
+                        width: outW, 
+                        height: outH, 
+                        bitrate: 5_000_000, 
+                        framerate: params.speedFps 
+                    });
+
+                    let audioEncoder = null;
+                    if (audioBuffer) {
+                        audioEncoder = new AudioEncoder({
+                            output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+                            error: (e) => console.error(e)
+                        });
+                        audioEncoder.configure({
+                            codec: 'mp4a.40.2', // AAC
+                            numberOfChannels: audioBuffer.numberOfChannels,
+                            sampleRate: audioBuffer.sampleRate,
+                            bitrate: 128_000
+                        });
+                    }
+
+                    const duration = source.type === 'video' ? source.duration : 5;
                     const totalFrames = Math.floor(duration * params.speedFps);
                     const timePerFrame = 1000000 / params.speedFps;
 
+                    // ビデオとオーディオのエンコード処理
                     for (let i = 0; i < totalFrames; i++) {
+                        // ビデオフレームの処理
                         if (source.type === 'video') {
                             source.element.currentTime = i / params.speedFps;
                             await new Promise(r => source.element.onseeked = r);
                         }
                         renderFrame(i % params.frameCount);
-                        const frame = new VideoFrame(canvasRef.current, { timestamp: i * timePerFrame });
+                        const timestamp = i * timePerFrame;
+                        const frame = new VideoFrame(canvasRef.current, { timestamp: timestamp });
                         videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
                         frame.close();
+
+                        // オーディオの処理 (ビデオのタイムスタンプに合わせてチャンクを流し込む)
+                        if (audioEncoder && audioBuffer) {
+                            const startSample = Math.floor((i / params.speedFps) * audioBuffer.sampleRate);
+                            const endSample = Math.floor(((i + 1) / params.speedFps) * audioBuffer.sampleRate);
+                            const numSamples = endSample - startSample;
+
+                            if (numSamples > 0) {
+                                const audioData = new AudioData({
+                                    format: 'f32-planar',
+                                    sampleRate: audioBuffer.sampleRate,
+                                    numberOfFrames: numSamples,
+                                    numberOfChannels: audioBuffer.numberOfChannels,
+                                    timestamp: timestamp,
+                                    data: (function() {
+                                        const combined = new Float32Array(numSamples * audioBuffer.numberOfChannels);
+                                        for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+                                            const channelData = audioBuffer.getChannelData(ch).subarray(startSample, endSample);
+                                            combined.set(channelData, ch * numSamples);
+                                        }
+                                        return combined;
+                                    })()
+                                });
+                                audioEncoder.encode(audioData);
+                                audioData.close();
+                            }
+                        }
                     }
+
                     await videoEncoder.flush();
+                    if (audioEncoder) await audioEncoder.flush();
+                    
                     muxer.finalize();
                     const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
                     const a = document.createElement('a');
@@ -279,6 +366,7 @@
                     a.download = `boil_${getBaseName(source.name)}.mp4`;
                     a.click();
                 } catch (e) {
+                    console.error(e);
                     alert("MP4 export failed: " + e.message);
                 } finally {
                     setIsProcessing(false);
@@ -288,7 +376,10 @@
             return (
                 <div className="min-h-screen bg-slate-900 text-white flex flex-col">
                     <header className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-                        <h1 className="text-xl font-bold text-indigo-400 italic">ラインボイラv2</h1>
+                        <div className="flex items-center gap-4">
+                            <h1 className="text-xl font-bold text-indigo-400 italic">ラインボイラv2.1</h1>
+                            <span className="text-[10px] bg-indigo-900 text-indigo-200 px-2 py-0.5 rounded border border-indigo-700">Audio Sync Support</span>
+                        </div>
                         <input type="file" onChange={handleFileUpload} accept="image/*,video/*" className="text-sm cursor-pointer" />
                     </header>
 
@@ -335,6 +426,9 @@
                                     className="w-full py-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded-lg font-bold transition-all shadow-md active:scale-95 text-sm">
                                     連番で透過画像保存(ZIP)
                                 </button>
+                                {source?.audioBuffer && (
+                                    <p className="text-[10px] text-center text-emerald-400">✓ 音声データを検出しました</p>
+                                )}
                             </div>
                         </div>
                     </main>
