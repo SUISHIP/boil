@@ -13,7 +13,7 @@
     <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.0/build/mp4-muxer.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; }
-        canvas { image-rendering: pixelated; }
+        canvas { image-rendering: pixelated; background-color: transparent; }
         .checkerboard {
             background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%);
             background-size: 20px 20px;
@@ -21,7 +21,7 @@
         }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
+<body class="bg-slate-900 text-slate-100">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -72,6 +72,7 @@
                 vec4 color = texture2D(u_image, v_texCoord + offset);
 
                 if (u_removeWhite) {
+                    float brightness = (color.r + color.g + color.b) / 3.0;
                     if (color.r > u_threshold && color.g > u_threshold && color.b > u_threshold) {
                         color.a = 0.0;
                     }
@@ -110,6 +111,10 @@
                     const shader = gl.createShader(type);
                     gl.shaderSource(shader, source);
                     gl.compileShader(shader);
+                    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                        console.error(gl.getShaderInfoLog(shader));
+                        return null;
+                    }
                     return shader;
                 };
 
@@ -149,7 +154,7 @@
             const renderFrame = useCallback((frameIdx) => {
                 const gl = glRef.current;
                 const program = programRef.current;
-                if (!gl || !source) return;
+                if (!gl || !source || !canvasRef.current) return;
 
                 gl.viewport(0, 0, canvasRef.current.width, canvasRef.current.height);
                 gl.clearColor(0,0,0,0);
@@ -189,13 +194,33 @@
                 const file = e.target.files?.[0];
                 if (!file) return;
                 const url = URL.createObjectURL(file);
+                
                 if (file.type.startsWith('video/')) {
                     const video = document.createElement('video');
-                    video.src = url; video.muted = true; video.loop = true; video.play();
+                    video.src = url; video.muted = true; video.loop = true; video.playsInline = true;
+                    
                     video.onloadedmetadata = () => {
-                        setSource({ type: 'video', element: video, width: video.videoWidth, height: video.videoHeight, name: file.name });
-                        canvasRef.current.width = video.videoWidth; canvasRef.current.height = video.videoHeight;
+                        video.play();
+                        const newSource = { 
+                            type: 'video', 
+                            element: video, 
+                            width: video.videoWidth, 
+                            height: video.videoHeight, 
+                            name: file.name,
+                            duration: video.duration,
+                            audioBuffer: null
+                        };
+                        setSource(newSource);
+                        canvasRef.current.width = video.videoWidth; 
+                        canvasRef.current.height = video.videoHeight;
                         if (!glRef.current) initGL(canvasRef.current);
+
+                        // 音声の抽出は後から非同期で行う
+                        fetchAudio(url).then(buf => {
+                            if (buf) {
+                                setSource(prev => prev ? {...prev, audioBuffer: buf} : null);
+                            }
+                        });
                     };
                 } else {
                     const img = new Image();
@@ -204,22 +229,28 @@
                         setSource({ type: 'image', element: img, width: img.width, height: img.height, name: file.name });
                         canvasRef.current.width = img.width; canvasRef.current.height = img.height;
                         if (!glRef.current) initGL(canvasRef.current);
-                        renderFrame(0);
+                        setTimeout(() => renderFrame(0), 10);
                     };
                 }
             };
 
-            const getBaseName = (fileName) => {
-                const parts = fileName.split('.');
-                return parts.length > 1 ? parts.slice(0, -1).join('.') : fileName;
-            };
+            async function fetchAudio(url) {
+                try {
+                    const response = await fetch(url);
+                    const arrayBuffer = await response.arrayBuffer();
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+                    return await audioCtx.decodeAudioData(arrayBuffer);
+                } catch (e) {
+                    console.warn("Audio extraction failed:", e);
+                    return null;
+                }
+            }
 
-            // ZIP エクスポート
             const handleExportZip = async () => {
-                if (!source || typeof window.JSZip === 'undefined') return;
+                if (!source || !window.JSZip) return;
                 setIsProcessing(true);
                 const zip = new window.JSZip();
-                const baseName = getBaseName(source.name);
+                const baseName = source.name.split('.')[0];
 
                 try {
                     for (let i = 0; i < params.frameCount; i++) {
@@ -240,24 +271,55 @@
             };
 
             const handleExportMP4 = async () => {
-                if (!source || typeof window.Mp4Muxer === 'undefined') return;
+                if (!source || !window.Mp4Muxer) return;
                 setIsProcessing(true);
                 try {
-                    const { width, height } = source;
+                    const { width, height, audioBuffer } = source;
                     const outW = width % 2 === 0 ? width : width - 1;
                     const outH = height % 2 === 0 ? height : height - 1;
-                    const muxer = new window.Mp4Muxer.Muxer({
+                    
+                    const muxerConfig = {
                         target: new window.Mp4Muxer.ArrayBufferTarget(),
                         video: { codec: 'avc', width: outW, height: outH },
                         fastStart: 'in-memory'
-                    });
+                    };
+
+                    if (audioBuffer) {
+                        muxerConfig.audio = {
+                            codec: 'aac',
+                            sampleRate: audioBuffer.sampleRate,
+                            numberOfChannels: audioBuffer.numberOfChannels
+                        };
+                    }
+
+                    const muxer = new window.Mp4Muxer.Muxer(muxerConfig);
                     const videoEncoder = new VideoEncoder({
                         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
                         error: (e) => console.error(e)
                     });
-                    videoEncoder.configure({ codec: 'avc1.4d0029', width: outW, height: outH, bitrate: 5_000_000, framerate: params.speedFps });
-                    
-                    const duration = source.type === 'video' ? source.element.duration : 5;
+                    videoEncoder.configure({ 
+                        codec: 'avc1.4d0029', 
+                        width: outW, 
+                        height: outH, 
+                        bitrate: 5_000_000, 
+                        framerate: params.speedFps 
+                    });
+
+                    let audioEncoder = null;
+                    if (audioBuffer) {
+                        audioEncoder = new AudioEncoder({
+                            output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+                            error: (e) => console.error(e)
+                        });
+                        audioEncoder.configure({
+                            codec: 'mp4a.40.2',
+                            numberOfChannels: audioBuffer.numberOfChannels,
+                            sampleRate: audioBuffer.sampleRate,
+                            bitrate: 128_000
+                        });
+                    }
+
+                    const duration = source.type === 'video' ? source.duration : 3; // 画像の場合は3秒
                     const totalFrames = Math.floor(duration * params.speedFps);
                     const timePerFrame = 1000000 / params.speedFps;
 
@@ -266,75 +328,135 @@
                             source.element.currentTime = i / params.speedFps;
                             await new Promise(r => source.element.onseeked = r);
                         }
+                        
                         renderFrame(i % params.frameCount);
-                        const frame = new VideoFrame(canvasRef.current, { timestamp: i * timePerFrame });
+                        const timestamp = i * timePerFrame;
+                        
+                        const frame = new VideoFrame(canvasRef.current, { timestamp: timestamp });
                         videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
                         frame.close();
+
+                        if (audioEncoder && audioBuffer) {
+                            const startSample = Math.floor((i / params.speedFps) * audioBuffer.sampleRate);
+                            const endSample = Math.floor(((i + 1) / params.speedFps) * audioBuffer.sampleRate);
+                            const numSamples = endSample - startSample;
+
+                            if (numSamples > 0) {
+                                const audioData = new AudioData({
+                                    format: 'f32-planar',
+                                    sampleRate: audioBuffer.sampleRate,
+                                    numberOfFrames: numSamples,
+                                    numberOfChannels: audioBuffer.numberOfChannels,
+                                    timestamp: timestamp,
+                                    data: (function() {
+                                        const combined = new Float32Array(numSamples * audioBuffer.numberOfChannels);
+                                        for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+                                            const chData = audioBuffer.getChannelData(ch).subarray(startSample, endSample);
+                                            combined.set(chData, ch * numSamples);
+                                        }
+                                        return combined;
+                                    })()
+                                });
+                                audioEncoder.encode(audioData);
+                                audioData.close();
+                            }
+                        }
                     }
+
                     await videoEncoder.flush();
+                    if (audioEncoder) await audioEncoder.flush();
+                    
                     muxer.finalize();
                     const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
-                    a.download = `boil_${getBaseName(source.name)}.mp4`;
+                    a.download = `boil_${source.name.split('.')[0]}.mp4`;
                     a.click();
                 } catch (e) {
-                    alert("MP4 export failed: " + e.message);
+                    console.error(e);
+                    alert("Export failed: " + e.message);
                 } finally {
                     setIsProcessing(false);
                 }
             };
 
             return (
-                <div className="min-h-screen bg-slate-900 text-white flex flex-col">
-                    <header className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-                        <h1 className="text-xl font-bold text-indigo-400 italic">ラインボイラv2</h1>
-                        <input type="file" onChange={handleFileUpload} accept="image/*,video/*" className="text-sm cursor-pointer" />
+                <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+                    <header className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900 shadow-md">
+                        <div className="flex items-center gap-3">
+                            <h1 className="text-xl font-black text-indigo-400 italic tracking-tighter">LINE BOILER v2.2</h1>
+                            {source && (
+                                <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30">
+                                    {source.width} x {source.height}
+                                </span>
+                            )}
+                        </div>
+                        <input type="file" onChange={handleFileUpload} accept="image/*,video/*" 
+                            className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer" />
                     </header>
 
-                    <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
-                        <div className="lg:col-span-3 flex flex-col gap-4">
-                            <div className="checkerboard rounded-xl overflow-hidden shadow-inner flex items-center justify-center bg-slate-800 min-h-[400px]">
-                                <canvas ref={canvasRef} className="max-w-full max-h-[70vh]" />
+                    <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-4 gap-6 overflow-hidden">
+                        <div className="lg:col-span-3 flex flex-col gap-4 h-full">
+                            <div className="checkerboard rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center bg-slate-800 border-4 border-slate-800 flex-1 relative min-h-[400px]">
+                                {!source && <p className="text-slate-500 font-bold">ファイルをアップロードしてください</p>}
+                                <canvas ref={canvasRef} className="max-w-full max-h-full object-contain" />
                             </div>
                         </div>
 
-                        <div className="bg-slate-800 p-6 rounded-xl space-y-6 shadow-xl border border-slate-700">
-                            <h2 className="font-bold text-slate-300 uppercase tracking-wider text-sm">パラメータ</h2>
-                            
-                            <div className="space-y-4">
-                                <label className="block text-xs text-slate-400">揺らぎ: {params.jitterStrength}px
-                                    <input type="range" min="0" max="20" step="0.1" value={params.jitterStrength} 
-                                        onChange={e => setParams({...params, jitterStrength: parseFloat(e.target.value)})} className="w-full mt-1" />
-                                </label>
-                                <label className="block text-xs text-slate-400">ノイズの細かさ: {params.noiseScale}
-                                    <input type="range" min="0.001" max="0.2" step="0.001" value={params.noiseScale} 
-                                        onChange={e => setParams({...params, noiseScale: parseFloat(e.target.value)})} className="w-full mt-1" />
-                                </label>
-                                <label className="block text-xs text-slate-400">スピード: {params.speedFps} FPS
-                                    <input type="range" min="1" max="60" value={params.speedFps} 
-                                        onChange={e => setParams({...params, speedFps: parseInt(e.target.value)})} className="w-full mt-1" />
-                                </label>
-                                <label className="block text-xs text-slate-400">フレーム数: {params.frameCount}
-                                    <input type="range" min="2" max="12" value={params.frameCount} 
-                                        onChange={e => setParams({...params, frameCount: parseInt(e.target.value)})} className="w-full mt-1" />
-                                </label>
+                        <div className="bg-slate-900 p-6 rounded-2xl space-y-6 shadow-2xl border border-slate-800 overflow-y-auto">
+                            <div>
+                                <h2 className="font-bold text-slate-400 uppercase tracking-widest text-xs mb-4 flex justify-between">
+                                    <span>Parameters</span>
+                                    <button onClick={() => setIsPlaying(!isPlaying)} className="text-indigo-400 hover:text-indigo-300">
+                                        {isPlaying ? "Pause" : "Play"}
+                                    </button>
+                                </h2>
+                                
+                                <div className="space-y-5">
+                                    <label className="block text-xs text-slate-300">揺らぎ (Jitter): {params.jitterStrength}px
+                                        <input type="range" min="0" max="20" step="0.1" value={params.jitterStrength} 
+                                            onChange={e => setParams({...params, jitterStrength: parseFloat(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                    </label>
+                                    <label className="block text-xs text-slate-300">ノイズ細かさ: {params.noiseScale}
+                                        <input type="range" min="0.001" max="0.2" step="0.001" value={params.noiseScale} 
+                                            onChange={e => setParams({...params, noiseScale: parseFloat(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                    </label>
+                                    <label className="block text-xs text-slate-300">再生速度: {params.speedFps} FPS
+                                        <input type="range" min="1" max="60" value={params.speedFps} 
+                                            onChange={e => setParams({...params, speedFps: parseInt(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                    </label>
+                                    <label className="block text-xs text-slate-300">アニメ枚数: {params.frameCount}
+                                        <input type="range" min="2" max="12" value={params.frameCount} 
+                                            onChange={e => setParams({...params, frameCount: parseInt(e.target.value)})} className="w-full mt-2 accent-indigo-500" />
+                                    </label>
 
-                                <div className="flex items-center gap-2 cursor-pointer pt-2">
-                                    <input type="checkbox" id="rmWhite" checked={params.removeWhiteBg} onChange={e => setParams({...params, removeWhiteBg: e.target.checked})} />
-                                    <label htmlFor="rmWhite" className="text-xs text-slate-300">白背景を透過</label>
+                                    <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-xl border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors"
+                                         onClick={() => setParams({...params, removeWhiteBg: !params.removeWhiteBg})}>
+                                        <input type="checkbox" checked={params.removeWhiteBg} readOnly className="accent-indigo-500 h-4 w-4" />
+                                        <span className="text-xs text-slate-200">白背景を透過 (PNG/Video)</span>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="space-y-3 pt-4 border-t border-slate-700">
+                            <div className="space-y-3 pt-4 border-t border-slate-800">
                                 <button onClick={handleExportMP4} disabled={!source || isProcessing}
-                                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg font-bold transition-all shadow-lg active:scale-95">
-                                    {isProcessing ? "保存中..." : "MP4で保存"}
+                                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-xl font-black transition-all shadow-lg active:scale-95 text-sm flex items-center justify-center gap-2">
+                                    {isProcessing ? <span className="animate-spin text-lg">↻</span> : null}
+                                    {isProcessing ? "PROCESSING..." : "MP4 で保存"}
                                 </button>
                                 <button onClick={handleExportZip} disabled={!source || isProcessing}
-                                    className="w-full py-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded-lg font-bold transition-all shadow-md active:scale-95 text-sm">
-                                    連番で透過画像保存(ZIP)
+                                    className="w-full py-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 rounded-xl font-bold transition-all text-xs text-slate-300 border border-slate-700">
+                                    連番透過 PNG 保存 (ZIP)
                                 </button>
+                                
+                                {source?.type === 'video' && (
+                                    <div className="text-[10px] text-center px-2 py-1 rounded-md bg-slate-800/50 border border-slate-700/50">
+                                        {source.audioBuffer ? 
+                                            <span className="text-emerald-400 font-bold">● 音声を保持して出力します</span> : 
+                                            <span className="text-slate-500 animate-pulse">○ 音声データを抽出中...</span>
+                                        }
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </main>
